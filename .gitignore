@@ -1,0 +1,15 @@
+# Environment files and secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Local data outputs
+/data/output/*
+!/data/output/.gitkeep
