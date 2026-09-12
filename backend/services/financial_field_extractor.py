@@ -30,7 +30,12 @@ def to_document_lines(input_data: "str | list[tuple[int, str]] | list[DocumentLi
     for page_num, page_text in pages:
         for line_num, raw_line in enumerate(page_text.splitlines(), start=1):
             if raw_line.strip():
-                result.append((page_num, line_num, raw_line, raw_line.strip()))
+                clean_line = raw_line.strip()
+                # Strip SROIE-style bounding box coordinates if line starts with 8 comma-separated numbers
+                sroie_match = re.match(r"^(?:\d+\s*,\s*){8}(.*)$", clean_line)
+                if sroie_match:
+                    clean_line = sroie_match.group(1).strip()
+                result.append((page_num, line_num, raw_line, clean_line))
     return result
 
 
@@ -44,6 +49,8 @@ def _first_match(patterns: list[str], text: str, flags: int = re.IGNORECASE) -> 
 
 def _extract_monetary_candidates(line: str) -> list[str]:
     cleaned = line
+    # Strip percentage numbers (e.g. 6.00%, 10%) so they are never treated as currency amounts
+    cleaned = re.sub(r"\b\d+(?:[.,]\d+)?\s*%", "", cleaned)
     # Remove single noise letters embedded between digits (e.g. 4e8 -> 48)
     cleaned = re.sub(r"(?<=\d)[a-zA-Z](?=\d)", "", cleaned)
     # Fix trailing OCR digit confusion (e.g. .0gK -> .00, .0o -> .00)
@@ -51,13 +58,37 @@ def _extract_monetary_candidates(line: str) -> list[str]:
     # Strip leading currency noise prefix (e.g. N63.35 -> 63.35)
     cleaned = re.sub(r"\b[Nn](\d+[.,]\d{2})\b", r"\1", cleaned)
 
-    # 1. Look for amounts with 2 decimal places (dot or comma, optional spaces around)
-    matches = re.findall(r"(?<!\d)(\d{1,6})\s*[.,]\s*(\d{2})(?!\d)", cleaned)
+    # 1. First priority: amounts explicitly paired with currency symbols or currency names
+    # e.g. "$45", "45 dollars", "1200 euros", "RM 4.90", "USD 3500.00", "3500 dollars"
+    curr_tagged = re.findall(
+        r"(?:[$€£₹]|RM|MYR|INR|USD|EUR|GBP)\s*(\d+(?:[.,]\d{2})?)|(\d+(?:[.,]\d{2})?)\s*(?:dollars?|euros?|pounds?|rupees?|bucks?|cents?|USD|EUR|GBP|RM)",
+        cleaned,
+        re.IGNORECASE,
+    )
+    if curr_tagged:
+        tagged_results = []
+        for match in curr_tagged:
+            val = match[0] or match[1]
+            if val:
+                val_clean = val.replace(",", ".")
+                if "." not in val_clean:
+                    val_clean = f"{val_clean}.00"
+                tagged_results.append(val_clean)
+        if tagged_results:
+            return tagged_results
+
+    # Strip full dates so date components (e.g. 12/02/2026, 2026-05-01) don't get treated as amounts
+    cleaned_no_dates = re.sub(r"\b\d{1,4}[/-]\d{1,2}[/-]\d{2,4}\b", "", cleaned)
+    # Strip alphanumeric reference codes like INV-404, REC-991
+    cleaned_no_dates = re.sub(r"\b[A-Za-z]+-\d+\b", "", cleaned_no_dates)
+
+    # 2. Look for amounts with 2 decimal places (dot or comma, optional spaces around)
+    matches = re.findall(r"(?<!\d)(\d{1,6})\s*[.,]\s*(\d{2})(?!\d)", cleaned_no_dates)
     if matches:
         return [f"{m[0]}.{m[1]}" for m in matches]
 
-    # 2. Whole numbers if no decimals present
-    whole_matches = re.findall(r"(?<!\d)(\d{1,6})(?!\d)", cleaned)
+    # 3. Whole numbers if no decimals present
+    whole_matches = re.findall(r"(?<!\d)(\d{1,6})(?!\d)", cleaned_no_dates)
     valid_whole = [
         w for w in whole_matches
         if len(w) <= 5 and w not in {"2018", "2019", "2020", "2021", "2022", "2023", "2024", "2025", "2026"}
@@ -120,14 +151,7 @@ def extract_final_amount(
         if re.search(r"\b(?:qty|price|amount|u/p)\s+(?:qty|price|amount|tax)", low):
             continue
 
-        amounts = _extract_monetary_candidates(clean)
-        if not amounts:
-            continue
-
-        # Ignore multi-column summary tables (e.g. GST summary codes with amount and tax)
-        if len(amounts) >= 2 and re.search(r"\b\d+[a-zA-Z]\b", clean):
-            continue
-
+        # Check total patterns
         score = 0
         method = "regex_total_label"
 
@@ -154,14 +178,49 @@ def extract_final_amount(
         ):
             score = 60
             method = "regex_total_label"
+        # Priority 4: Conversational / spoken financial action (paid, spent, transferred, received, etc.)
+        elif re.search(r"\b(?:paid|spent|transferred|transfer|sent|received|cost|charged|payment(?:\s+of)?)\b", low):
+            score = 50
+            method = "spoken_action_amount"
+        elif total_count == 1:
+            score = 30
+            method = "single_amount_fallback"
         else:
+            continue
+
+        amounts = _extract_monetary_candidates(clean)
+        target_raw = raw
+        target_lno = lno
+        target_pno = pno
+        if not amounts:
+            # Check next lines if the label was on its own line (common in multi-column or OCR receipts)
+            for offset in (1, 2):
+                next_idx = idx + offset
+                if next_idx < total_count:
+                    npno, nlno, nraw, nclean = lines[next_idx]
+                    nlow = nclean.lower()
+                    if re.search(r"\b(?:cash|tendered|change|kembali|baki|visa|card|master)\b", nlow):
+                        break
+                    namounts = _extract_monetary_candidates(nclean)
+                    if namounts:
+                        amounts = namounts
+                        target_raw = f"{raw} {nraw}"
+                        target_lno = nlno
+                        target_pno = npno
+                        break
+
+        if not amounts:
+            continue
+
+        # Ignore multi-column summary tables (e.g. GST summary codes with amount and tax)
+        if len(amounts) >= 2 and re.search(r"\b\d+[a-zA-Z]\b", clean):
             continue
 
         if re.search(r"\b(?:rm|myr|inr|usd|eur|bm|ru|rn|rh)\b|[$€£₹]", low):
             score += 5
         score += (idx * 5) // max(total_count, 1)
 
-        candidates.append((score, amounts[-1], FieldSource(pno, lno, raw), method))
+        candidates.append((score, amounts[-1], FieldSource(target_pno, target_lno, target_raw), method))
 
     if not candidates:
         return None, None, None
@@ -174,34 +233,50 @@ def _extract_currency(
     lines: list[DocumentLine],
     amount_source: FieldSource | None = None,
 ) -> tuple[str | None, FieldSource | None]:
-    currency_pattern = r"\b(RM|MYR|INR|USD|EUR|GBP|AUD|SGD)\b|([$€£₹])"
+    currency_pattern = r"\b(RM|MYR|INR|USD|EUR|GBP|AUD|SGD|dollars?|euros?|pounds?|rupees?|ringgit)\b|([$€£₹])"
+
+    def _normalize_curr(val: str) -> str:
+        low = val.lower()
+        if "dollar" in low or val == "$":
+            return "USD"
+        if "euro" in low or val == "€":
+            return "EUR"
+        if "pound" in low or val == "£":
+            return "GBP"
+        if "rupee" in low or val == "₹":
+            return "INR"
+        if "ringgit" in low:
+            return "RM"
+        return val.upper()
 
     # 1. Prefer currency on the selected amount line
     if amount_source is not None:
         match = re.search(currency_pattern, amount_source.source_text, re.IGNORECASE)
         if match:
-            return match.group(1) or match.group(2), amount_source
+            matched_val = match.group(1) or match.group(2)
+            return _normalize_curr(matched_val), amount_source
         if re.search(r"\b(?:rh|rn|ru|bm)\b", amount_source.source_text, re.IGNORECASE):
             return "RM", amount_source
 
-    # 2. Search lines mentioning total
+    # 2. Search lines mentioning total or financial action
     for pno, lno, raw_line, line in lines:
-        if not re.search(r"total|potal|tutal|lota", line, re.IGNORECASE):
+        if not re.search(r"total|potal|tutal|lota|paid|spent|received|transferred|amount|cost", line, re.IGNORECASE):
             continue
         match = re.search(currency_pattern, line, re.IGNORECASE)
         if match:
-            return match.group(1) or match.group(2), FieldSource(pno, lno, raw_line)
+            matched_val = match.group(1) or match.group(2)
+            return _normalize_curr(matched_val), FieldSource(pno, lno, raw_line)
         if re.search(r"\b(?:rh|rn|ru|bm)\b", line, re.IGNORECASE):
             return "RM", FieldSource(pno, lno, raw_line)
     return None, None
 
 
 def _extract_document_number(lines: list[DocumentLine]) -> tuple[str | None, FieldSource | None]:
-    label = r"(?:invoice|inv|receipt|slip|bill|ref(?:erence)?)"
+    label = r"(?:tax\s+invoice|simplified\s+tax\s+invoice|invoice|inv|receipt|slip|bill|ref(?:erence)?)"
     pattern = rf"\b{label}\b[ \t]*(?:no\.?|number|#)?[ \t]*[:.\-]?[ \t]*(?!date\b|total\b|amount\b|cash\b|change\b|tax\b|gst\b)([A-Z0-9][A-Z0-9/\-$]*)"
     for pno, lno, raw_line, line in lines:
         cleaned = line.replace("“", " ").replace("”", " ").replace("’", " ")
-        if re.search(r"tax\s+invoice|simplified\s+tax|gst\s+invoice", cleaned, re.IGNORECASE):
+        if re.fullmatch(r"(?:tax\s+invoice|simplified\s+tax|gst\s+invoice)", cleaned.strip(), re.IGNORECASE):
             continue
         match = re.search(pattern, cleaned, re.IGNORECASE)
         if not match:
@@ -219,8 +294,22 @@ def _extract_document_number(lines: list[DocumentLine]) -> tuple[str | None, Fie
 
 
 def _extract_party_name(lines: list[DocumentLine]) -> tuple[str | None, FieldSource | None]:
-    # 1. Labeled vendor/merchant pattern
     all_text = "\n".join(raw for _, _, raw, _ in lines)
+
+    # 1. Spoken conversational patterns (e.g. "paid 45 dollars at Starbucks", "transferred 1200 euros to Shell station", "received from ACME Corp")
+    spoken_match = re.search(
+        r"(?i)\b(?:to|at|from)\s+([A-Za-z0-9\s&.\-]+?)(?:\s+for|\s+on|\s+dated|\s+ref|\s+via|\.|$)",
+        all_text,
+    )
+    if spoken_match:
+        candidate_party = spoken_match.group(1).strip()
+        blocked_words = {"the", "a", "an", "my", "our", "invoice", "receipt", "account", "cash", "bank"}
+        if len(candidate_party) >= 2 and candidate_party.lower() not in blocked_words and not re.match(r"^\d+$", candidate_party):
+            for pno, lno, raw_line, _ in lines:
+                if candidate_party in raw_line:
+                    return candidate_party, FieldSource(pno, lno, raw_line)
+
+    # 2. Labeled vendor/merchant pattern
     labeled = _first_match(
         [r"(?im)^\s*(?:vendor|seller|merchant|supplier|company|billed\s+by|sold\s+by)\s*[:#-]\s*(.+?)\s*$"],
         all_text,
@@ -230,7 +319,7 @@ def _extract_party_name(lines: list[DocumentLine]) -> tuple[str | None, FieldSou
             if labeled in line:
                 return labeled, FieldSource(pno, lno, raw_line)
 
-    # 2. Look at header lines of page 1
+    # 3. Look at header lines of page 1
     page_1_lines = [item for item in lines if item[0] == 1]
     header_lines = page_1_lines[:12] if page_1_lines else lines[:12]
 
@@ -239,7 +328,7 @@ def _extract_party_name(lines: list[DocumentLine]) -> tuple[str | None, FieldSou
         re.I,
     )
     company_markers = re.compile(
-        r"sdn\s+bhd|ltd|limited|pvt\s+ltd|inc\.?|llc|\bco\.?\b|perniagaan|stationery|books|gift|home\s+deco|traders",
+        r"sdn\s+bhd|ltd|limited|pvt\s+ltd|inc\.?|llc|\bco\.?\b|perniagaan|enterprise|\bsb\b|\bbhd\b|stationery|books|gift|home\s+deco|traders|petron|shell",
         re.I,
     )
     candidates: list[tuple[int, str, FieldSource]] = []
@@ -268,6 +357,17 @@ def _extract_description(lines: list[DocumentLine]) -> tuple[str | None, FieldSo
         match = re.match(r"^\s*(?:description|details?|particulars?)\s*[:#-]\s*(.+?)\s*$", line, re.IGNORECASE)
         if match:
             return match.group(1).strip(), FieldSource(pno, lno, raw_line)
+
+        # Spoken description pattern ("for coffee", "towards electric bill")
+        spoken_desc = re.search(
+            r"(?i)\b(?:for|towards|regarding|purpose\s+of)\s+([A-Za-z0-9\s&.\-]+?)(?:\s+on|\s+at|\s+dated|\s+ref|\s+via|\.|$)",
+            line,
+        )
+        if spoken_desc:
+            desc_val = spoken_desc.group(1).strip()
+            if len(desc_val) >= 3 and desc_val.lower() not in {"the", "a", "an", "this", "that"}:
+                return desc_val, FieldSource(pno, lno, raw_line)
+
     return None, None
 
 
@@ -277,7 +377,12 @@ def extract_financial_fields(input_data: str | list[tuple[int, str]]) -> dict[st
     all_text = "\n".join(raw for _, _, raw, _ in lines)
 
     date = _first_match(
-        [r"\b(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\b", r"\b(\d{4}[/-]\d{1,2}[/-]\d{1,2})\b"],
+        [
+            r"\b(\d{1,2}(?:st|nd|rd|th)?\s+(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{4})\b",
+            r"\b((?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{1,2}(?:st|nd|rd|th)?,?\s+\d{4})\b",
+            r"\b(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\b",
+            r"\b(\d{4}[/-]\d{1,2}[/-]\d{1,2})\b",
+        ],
         all_text,
     )
     date_source: FieldSource | None = None

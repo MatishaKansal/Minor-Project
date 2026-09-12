@@ -110,50 +110,23 @@ def _database_confidence(confidence_score: float | None) -> float | None:
 def _database_date(value: str | None) -> str | None:
     if not value:
         return None
-    for pattern in ("%d/%m/%Y", "%d-%m-%Y", "%d/%m/%y", "%d-%m-%y", "%Y-%m-%d"):
+    for pattern in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%m/%d/%Y", "%d/%m/%y", "%d-%m-%y", "%Y/%m/%d"):
         try:
-            return datetime.strptime(value, pattern).date().isoformat()
+            return datetime.strptime(value.strip(), pattern).date().isoformat()
         except ValueError:
             continue
-    return value
+    match = re.search(r"\b\d{4}-\d{2}-\d{2}\b", value)
+    if match:
+        return match.group(0)
+    return None
 
 
-def persist_evidence(
-    file_path: str | os.PathLike[str],
+def _insert_evidence_records(
+    supabase: Client,
+    file_id: str,
+    business_id: str,
     evidence: Any,
-    business_id: str | None = None,
-    file_type: str = "receipt",
-    storage_path: str | None = None,
-    client: Client | None = None,
 ) -> dict[str, str]:
-    """Insert a parsed document, its financial evidence, and provenance rows."""
-    path = Path(file_path)
-    if not path.is_file():
-        raise FileNotFoundError(f"Image file does not exist: {path}")
-    supabase = client or get_supabase_client()
-    business_id = business_id.strip() if business_id else get_or_create_default_business(supabase)
-    bucket = get_storage_bucket(supabase)
-    object_path = f"{business_id}/{uuid4()}-{path.name}"
-    with path.open("rb") as source_file:
-        supabase.storage.from_(bucket).upload(
-            object_path,
-            source_file,
-            {"content-type": mimetypes.guess_type(path.name)[0] or "application/octet-stream", "upsert": "false"},
-        )
-    source_row = {
-        "business_id": business_id,
-        "file_name": path.name,
-        "file_type": file_type,
-        "mime_type": mimetypes.guess_type(path.name)[0],
-        "storage_path": storage_path or f"{bucket}/{object_path}",
-        "file_hash": _file_hash(path),
-        "processing_status": "processed" if evidence.processing_status == "success" else "failed",
-    }
-    source_response = supabase.table("source_file").insert(source_row).execute()
-    if not source_response.data:
-        raise RuntimeError("Supabase did not return the inserted source_file row")
-    file_id = source_response.data[0]["file_id"]
-
     confidence = _database_confidence(evidence.confidence_score)
     financial_row = {
         "file_id": file_id,
@@ -194,6 +167,12 @@ def persist_evidence(
         "processing_status": evidence.processing_status,
         "error": evidence.error,
     }
+    if hasattr(evidence, "summary") and evidence.summary:
+        details["summary"] = evidence.summary.model_dump() if hasattr(evidence.summary, "model_dump") else evidence.summary
+    if hasattr(evidence, "transactions") and evidence.transactions:
+        details["transactions"] = [
+            t.model_dump() if hasattr(t, "model_dump") else t for t in evidence.transactions
+        ]
     supabase.table("evidence_details").insert(
         {"evidence_id": evidence_id, "details": details}
     ).execute()
@@ -229,7 +208,7 @@ def persist_evidence(
                     "line_number": line_number,
                 },
                 "extraction_method": extraction_method,
-                "confidence_score": confidence_score,
+                "confidence_score": _database_confidence(confidence_score),
             }
         )
     if not provenance_rows:
@@ -237,15 +216,94 @@ def persist_evidence(
             {
                 "evidence_id": evidence_id,
                 "file_id": file_id,
-                "page_number": evidence.page_number,
-                "source_text": evidence.extracted_text,
-                "extraction_method": "PDF_TEXT" if evidence.source_type == "pdf" else "OCR",
+                "page_number": getattr(evidence, "page_number", 1),
+                "source_text": getattr(evidence, "extracted_text", ""),
+                "extraction_method": "TEXT" if evidence.source_type in {"text", "txt"} else ("PDF_TEXT" if evidence.source_type == "pdf" else "OCR"),
                 "confidence_score": confidence,
             }
         ]
     supabase.table("provenance").insert(provenance_rows).execute()
     LOGGER.info("Persisted evidence: file_id=%s evidence_id=%s", file_id, evidence_id)
     return {"file_id": file_id, "evidence_id": evidence_id}
+
+
+def persist_evidence(
+    file_path: str | os.PathLike[str],
+    evidence: Any,
+    business_id: str | None = None,
+    file_type: str = "receipt",
+    storage_path: str | None = None,
+    client: Client | None = None,
+) -> dict[str, str]:
+    """Insert a parsed document, its financial evidence, and provenance rows."""
+    path = Path(file_path)
+    if not path.is_file():
+        raise FileNotFoundError(f"Document file does not exist: {path}")
+    supabase = client or get_supabase_client()
+    business_id = business_id.strip() if business_id else get_or_create_default_business(supabase)
+    bucket = get_storage_bucket(supabase)
+    object_path = f"{business_id}/{uuid4()}-{path.name}"
+    with path.open("rb") as source_file:
+        supabase.storage.from_(bucket).upload(
+            object_path,
+            source_file,
+            {"content-type": mimetypes.guess_type(path.name)[0] or "application/octet-stream", "upsert": "false"},
+        )
+    source_row = {
+        "business_id": business_id,
+        "file_name": path.name,
+        "file_type": file_type,
+        "mime_type": mimetypes.guess_type(path.name)[0],
+        "storage_path": storage_path or f"{bucket}/{object_path}",
+        "file_hash": _file_hash(path),
+        "processing_status": "processed" if evidence.processing_status == "success" else "failed",
+    }
+    source_response = supabase.table("source_file").insert(source_row).execute()
+    if not source_response.data:
+        raise RuntimeError("Supabase did not return the inserted source_file row")
+    file_id = source_response.data[0]["file_id"]
+
+    return _insert_evidence_records(supabase, file_id, business_id, evidence)
+
+
+def persist_text_evidence(
+    text: str,
+    evidence: Any,
+    source_name: str = "chat_input.txt",
+    business_id: str | None = None,
+    file_type: str = "receipt",
+    client: Client | None = None,
+) -> dict[str, str]:
+    """Insert raw text/chat message into Supabase storage, source_file, and evidence tables."""
+    supabase = client or get_supabase_client()
+    business_id = business_id.strip() if business_id else get_or_create_default_business(supabase)
+    bucket = get_storage_bucket(supabase)
+    safe_name = source_name if source_name.endswith(".txt") else f"{source_name}.txt"
+    object_path = f"{business_id}/{uuid4()}-{safe_name}"
+
+    text_bytes = text.encode("utf-8")
+    supabase.storage.from_(bucket).upload(
+        object_path,
+        text_bytes,
+        {"content-type": "text/plain; charset=utf-8", "upsert": "false"},
+    )
+    file_hash = hashlib.sha256(text_bytes).hexdigest()
+
+    source_row = {
+        "business_id": business_id,
+        "file_name": safe_name,
+        "file_type": file_type,
+        "mime_type": "text/plain",
+        "storage_path": f"{bucket}/{object_path}",
+        "file_hash": file_hash,
+        "processing_status": "processed" if evidence.processing_status == "success" else "failed",
+    }
+    source_response = supabase.table("source_file").insert(source_row).execute()
+    if not source_response.data:
+        raise RuntimeError("Supabase did not return the inserted source_file row")
+    file_id = source_response.data[0]["file_id"]
+
+    return _insert_evidence_records(supabase, file_id, business_id, evidence)
 
 
 def persist_image_evidence(
@@ -258,3 +316,106 @@ def persist_image_evidence(
 ) -> dict[str, str]:
     """Backward-compatible image persistence entry point."""
     return persist_evidence(file_path, evidence, business_id, file_type, storage_path, client)
+
+
+def persist_bank_statement_evidence(
+    csv_text_or_path: str | os.PathLike[str],
+    evidence: Any,
+    source_name: str = "bank_statement.csv",
+    business_id: str | None = None,
+    file_type: str = "bank_statement",
+    client: Client | None = None,
+) -> dict[str, str]:
+    """Persist bank statement CSV, summary, transactions, and provenance into Supabase."""
+    supabase = client or get_supabase_client()
+    business_id = business_id.strip() if business_id else get_or_create_default_business(supabase)
+    bucket = get_storage_bucket(supabase)
+
+    try:
+        path = Path(csv_text_or_path)
+        if path.is_file():
+            file_bytes = path.read_bytes()
+            safe_name = path.name
+        else:
+            file_bytes = str(csv_text_or_path).encode("utf-8")
+            safe_name = source_name if source_name.endswith((".csv", ".tsv", ".txt")) else f"{source_name}.csv"
+    except Exception:
+        file_bytes = str(csv_text_or_path).encode("utf-8")
+        safe_name = source_name if source_name.endswith((".csv", ".tsv", ".txt")) else f"{source_name}.csv"
+
+    object_path = f"{business_id}/{uuid4()}-{safe_name}"
+    supabase.storage.from_(bucket).upload(
+        object_path,
+        file_bytes,
+        {"content-type": "text/csv; charset=utf-8", "upsert": "false"},
+    )
+    file_hash = hashlib.sha256(file_bytes).hexdigest()
+
+    source_row = {
+        "business_id": business_id,
+        "file_name": safe_name,
+        "file_type": file_type,
+        "mime_type": "text/csv",
+        "storage_path": f"{bucket}/{object_path}",
+        "file_hash": file_hash,
+        "processing_status": "processed" if evidence.processing_status == "success" else "failed",
+    }
+    source_response = supabase.table("source_file").insert(source_row).execute()
+    if not source_response.data:
+        raise RuntimeError("Supabase did not return the inserted source_file row")
+    file_id = source_response.data[0]["file_id"]
+
+    return _insert_evidence_records(supabase, file_id, business_id, evidence)
+
+
+def persist_voice_evidence(
+    audio_path_or_bytes: str | os.PathLike[str] | bytes,
+    evidence: Any,
+    source_name: str = "voice_note.wav",
+    business_id: str | None = None,
+    file_type: str = "voice",
+    client: Client | None = None,
+) -> dict[str, str]:
+    """Persist audio voice recording file, transcription, and extracted financial fields into Supabase."""
+    supabase = client or get_supabase_client()
+    business_id = business_id.strip() if business_id else get_or_create_default_business(supabase)
+    bucket = get_storage_bucket(supabase)
+
+    if isinstance(audio_path_or_bytes, (str, os.PathLike)) and Path(audio_path_or_bytes).is_file():
+        path = Path(audio_path_or_bytes)
+        file_bytes = path.read_bytes()
+        safe_name = path.name
+    elif isinstance(audio_path_or_bytes, bytes):
+        file_bytes = audio_path_or_bytes
+        safe_name = source_name
+    else:
+        path = Path(str(audio_path_or_bytes))
+        file_bytes = path.read_bytes() if path.is_file() else b""
+        safe_name = path.name if path.name else source_name
+
+    object_path = f"{business_id}/{uuid4()}-{safe_name}"
+    guessed_type, _ = mimetypes.guess_type(safe_name)
+    mime_type = guessed_type or "audio/wav"
+
+    supabase.storage.from_(bucket).upload(
+        object_path,
+        file_bytes,
+        {"content-type": mime_type, "upsert": "false"},
+    )
+    file_hash = hashlib.sha256(file_bytes).hexdigest()
+
+    source_row = {
+        "business_id": business_id,
+        "file_name": safe_name,
+        "file_type": file_type,
+        "mime_type": mime_type,
+        "storage_path": f"{bucket}/{object_path}",
+        "file_hash": file_hash,
+        "processing_status": "processed" if evidence.processing_status == "success" else "failed",
+    }
+    source_response = supabase.table("source_file").insert(source_row).execute()
+    if not source_response.data:
+        raise RuntimeError("Supabase did not return the inserted source_file row")
+    file_id = source_response.data[0]["file_id"]
+
+    return _insert_evidence_records(supabase, file_id, business_id, evidence)

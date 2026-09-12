@@ -76,17 +76,47 @@ def test_invalid_pdf_fails_gracefully(tmp_path):
     assert result.error
 
 
-def test_image_only_pdf_fails_without_ocr(tmp_path):
-    path = tmp_path / "image-only.pdf"
+class MockPDFOCREngine:
+    def __init__(self, text="Vendor: Scanned Corp\nTOTAL: USD 75.00", confidence=92.5):
+        self.text = text
+        self.confidence = confidence
+
+    def extract(self, image, language="eng"):
+        from backend.parsers.image_parser import OCRResult
+        return OCRResult(text=self.text, confidence_score=self.confidence)
+
+
+def test_scanned_image_only_pdf_uses_ocr_fallback(tmp_path):
+    path = tmp_path / "scanned_invoice.pdf"
+    # Create empty PDF page with no native text (scanned image page)
     document = fitz.open()
     document.new_page()
     document.save(path)
     document.close()
 
-    result = parse_pdf(path)
+    mock_engine = MockPDFOCREngine()
+    result = parse_pdf(path, ocr_engine=mock_engine)
+
+    assert result.processing_status == "success"
+    assert result.source_type == "pdf"
+    assert result.amount == "75.00"
+    assert result.currency == "USD"
+    assert result.party_name == "Scanned Corp"
+    assert result.confidence_score == 92.5
+
+
+def test_blank_pdf_without_ocr_content_fails_gracefully(tmp_path):
+    path = tmp_path / "blank.pdf"
+    document = fitz.open()
+    document.new_page()
+    document.save(path)
+    document.close()
+
+    empty_engine = MockPDFOCREngine(text="", confidence=None)
+    result = parse_pdf(path, ocr_engine=empty_engine)
 
     assert result.processing_status == "failed"
-    assert "no extractable text" in result.error
+    assert "no extractable text" in result.error.lower()
 
 
 def test_pdf_result_is_compatible_with_evidence_schema(tmp_path):

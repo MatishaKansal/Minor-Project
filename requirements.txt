@@ -7,3 +7,4 @@ opencv-python-headless>=4.8
 numpy>=1.24
 pydantic>=2.0
 pytest>=8.0
+SpeechRecognition>=3.10.0

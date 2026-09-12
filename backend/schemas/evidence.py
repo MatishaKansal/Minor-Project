@@ -14,7 +14,7 @@ class EvidenceProvenance(BaseModel):
 
 
 class Evidence(BaseModel):
-    """Structured evidence produced from one image or text PDF."""
+    """Structured evidence produced from one document, image, or text file."""
 
     model_config = ConfigDict(extra="allow")
 
@@ -30,10 +30,53 @@ class Evidence(BaseModel):
     database_file_id: Optional[str] = None
     database_evidence_id: Optional[str] = None
 
-    # Reserved fields for future non-LLM financial extraction.
+    # Standard financial fields
     date: Optional[str] = None
     amount: Optional[str] = None
     currency: Optional[str] = None
     party_name: Optional[str] = None
     invoice_number: Optional[str] = None
     description: Optional[str] = None
+
+
+class BankTransaction(BaseModel):
+    """A single normalized transaction row from a bank statement."""
+
+    model_config = ConfigDict(extra="allow")
+
+    date: Optional[str] = None
+    description: str = ""
+    amount: str
+    transaction_type: str = "debit"  # "debit" | "credit"
+    balance: Optional[str] = None
+    reference_number: Optional[str] = None
+    currency: Optional[str] = None
+    category: Optional[str] = None
+    line_number: Optional[int] = None
+    raw_text: Optional[str] = None
+
+
+class BankStatementSummary(BaseModel):
+    """Summary analytics and metadata extracted from a bank statement."""
+
+    model_config = ConfigDict(extra="allow")
+
+    account_number: Optional[str] = None
+    bank_name: Optional[str] = None
+    statement_period_start: Optional[str] = None
+    statement_period_end: Optional[str] = None
+    opening_balance: Optional[str] = None
+    closing_balance: Optional[str] = None
+    total_deposits: Optional[str] = None
+    total_withdrawals: Optional[str] = None
+    net_cash_flow: Optional[str] = None
+    total_transactions: int = 0
+    currency: Optional[str] = None
+
+
+class BankStatementEvidence(Evidence):
+    """Structured evidence specialized for multi-transaction bank statements."""
+
+    source_type: str = "bank_csv"
+    summary: Optional[BankStatementSummary] = None
+    transactions: list[BankTransaction] = Field(default_factory=list)

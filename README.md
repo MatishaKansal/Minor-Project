@@ -32,7 +32,7 @@ python -c "from backend.parsers.image_parser import parse_image; print(parse_ima
 
 ## Run the PDF parser
 
-Text-based PDFs are extracted page by page with PyMuPDF. Image-only PDFs are reported as failed until PDF-to-image OCR is implemented:
+PDFs with selectable text are extracted page by page with PyMuPDF. Scanned or image-only PDFs automatically render each page and run high-resolution Tesseract OCR fallback with confidence scoring:
 
 ```powershell
 python -c "from backend.parsers.pdf_parser import parse_pdf; print(parse_pdf('data/input/invoice.pdf').model_dump_json(indent=2))"

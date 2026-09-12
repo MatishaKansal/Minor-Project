@@ -1,11 +1,14 @@
-"""Text extraction and deterministic financial parsing for PDF documents."""
+"""Text extraction and deterministic financial parsing for PDF documents with OCR fallback."""
 
+import io
 import logging
 import os
 from pathlib import Path
 
-import fitz
+import fitz  # PyMuPDF
+from PIL import Image
 
+from backend.parsers.image_parser import OCREngine, extract_text_with_ocr, preprocess_image
 from backend.schemas.evidence import Evidence, EvidenceProvenance
 from backend.services.financial_field_extractor import extract_financial_fields
 
@@ -15,6 +18,7 @@ DEFAULT_LANGUAGE = "eng"
 
 
 def validate_pdf_path(file_path: str | os.PathLike[str]) -> Path:
+    """Validate that the given path exists and has a .pdf extension."""
     path = Path(file_path)
     if not path.is_file():
         raise FileNotFoundError(f"PDF file does not exist: {path}")
@@ -23,20 +27,55 @@ def validate_pdf_path(file_path: str | os.PathLike[str]) -> Path:
     return path
 
 
-def extract_pdf_pages(file_path: str | os.PathLike[str]) -> list[tuple[int, str]]:
-    """Return original text for each PDF page, retaining page order."""
+def extract_pdf_pages(
+    file_path: str | os.PathLike[str],
+    language: str = DEFAULT_LANGUAGE,
+    ocr_engine: OCREngine | None = None,
+) -> tuple[list[tuple[int, str]], float | None]:
+    """Return original or OCR text for each PDF page, retaining page order.
+
+    If a page has no native text (i.e. scanned image PDF), it renders the page
+    and runs OCR preprocessing and extraction automatically.
+    """
     path = validate_pdf_path(file_path)
+    pages: list[tuple[int, str]] = []
+    ocr_confidences: list[float] = []
+
     try:
         with fitz.open(path) as document:
             if document.page_count == 0:
                 raise ValueError("PDF contains no pages")
-            pages = [(page_number, document.load_page(page_number - 1).get_text("text"))
-                     for page_number in range(1, document.page_count + 1)]
+
+            for page_number in range(1, document.page_count + 1):
+                page = document.load_page(page_number - 1)
+                page_text = page.get_text("text").strip()
+
+                # If no extractable native text is found on the page, fallback to OCR
+                if not page_text:
+                    LOGGER.info("No native text on page %d of %s; falling back to OCR", page_number, path.name)
+                    # Render page as high-res image (300 DPI) for OCR
+                    pixmap = page.get_pixmap(dpi=300)
+                    image_bytes = pixmap.tobytes("png")
+                    with Image.open(io.BytesIO(image_bytes)) as pil_img:
+                        rgb_image = pil_img.convert("RGB")
+                    prepared = preprocess_image(rgb_image)
+                    ocr_res = extract_text_with_ocr(prepared, language=language, engine=ocr_engine)
+                    page_text = ocr_res.text.strip()
+                    if ocr_res.confidence_score is not None:
+                        ocr_confidences.append(ocr_res.confidence_score)
+
+                pages.append((page_number, page_text))
+
     except (fitz.FitzError, OSError, ValueError) as exc:
         raise ValueError(f"Unable to read PDF '{path}': the file may be corrupted or unreadable") from exc
+
     if not any(text.strip() for _, text in pages):
-        raise ValueError("PDF contains no extractable text; image-only PDFs are not supported")
-    return pages
+        raise ValueError("PDF contains no extractable text or recognizable OCR content")
+
+    avg_confidence = (
+        round(sum(ocr_confidences) / len(ocr_confidences), 2) if ocr_confidences else None
+    )
+    return pages, avg_confidence
 
 
 def parse_pdf(
@@ -45,23 +84,27 @@ def parse_pdf(
     business_id: str | None = None,
     persist_to_database: bool = False,
     file_type: str = "invoice",
+    ocr_engine: OCREngine | None = None,
 ) -> Evidence:
-    """Return a successful or failed Evidence response for one PDF."""
+    """Return a successful or failed Evidence response for one PDF with automatic OCR fallback."""
     path = Path(file_path)
     try:
-        pages = extract_pdf_pages(path)
-        extracted_text = "\n\n".join(text.rstrip("\n") for _, text in pages)
+        pages, confidence_score = extract_pdf_pages(path, language=language, ocr_engine=ocr_engine)
+        extracted_text = "\n\n".join(text.rstrip("\n") for _, text in pages if text.strip())
         financial_fields = extract_financial_fields(pages)
         provenance = financial_fields.pop("provenance", [])
+
         evidence = Evidence(
             source_type="pdf",
             file_name=path.name,
             extracted_text=extracted_text,
             language=language,
+            confidence_score=confidence_score,
             processing_status="success",
             provenance=[EvidenceProvenance.model_validate(item) for item in provenance],
             **financial_fields,
         )
+
         if persist_to_database:
             from backend.database.supabase_repository import persist_evidence
 
@@ -70,7 +113,9 @@ def parse_pdf(
                 "database_file_id": database_ids["file_id"],
                 "database_evidence_id": database_ids["evidence_id"],
             })
+
         return evidence
+
     except Exception as exc:
         LOGGER.exception("PDF parsing failed for %s", path)
         return Evidence(
