@@ -1,8 +1,10 @@
 """Voice and audio parsing with Speech-to-Text transcription and financial extraction."""
 
+import io
 import logging
 import os
 import tempfile
+import wave
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -13,7 +15,7 @@ from backend.schemas.evidence import Evidence, EvidenceProvenance
 from backend.services.financial_field_extractor import extract_financial_fields
 
 LOGGER = logging.getLogger(__name__)
-SUPPORTED_VOICE_EXTENSIONS = {".wav", ".mp3", ".m4a", ".ogg", ".flac", ".webm", ".aiff", ".aif"}
+SUPPORTED_VOICE_EXTENSIONS = {".wav", ".mp3", ".m4a", ".aac", ".ogg", ".flac", ".webm", ".aiff", ".aif"}
 DEFAULT_LANGUAGE = "en-US"
 
 
@@ -34,6 +36,31 @@ class STTEngine(Protocol):
         ...
 
 
+def _audio_to_wav_stream(audio_path: Path) -> io.BytesIO | Path:
+    """Convert non-WAV compressed audio (e.g. .aac, .m4a, .mp3) to in-memory 16kHz PCM WAV."""
+    if audio_path.suffix.lower() == ".wav":
+        return audio_path
+    try:
+        import av
+
+        container = av.open(str(audio_path))
+        resampler = av.AudioResampler(format="s16", layout="mono", rate=16000)
+        wav_io = io.BytesIO()
+        with wave.open(wav_io, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(16000)
+            for frame in container.decode(audio=0):
+                frame.pts = None
+                for rf in resampler.resample(frame):
+                    wf.writeframes(rf.to_ndarray().tobytes())
+        wav_io.seek(0)
+        return wav_io
+    except Exception as exc:
+        LOGGER.warning("Audio conversion via av failed for %s: %s; trying direct read", audio_path, exc)
+        return audio_path
+
+
 class SpeechRecognitionEngine:
     """Default STT engine using the SpeechRecognition library and Google Speech Recognition API."""
 
@@ -45,7 +72,8 @@ class SpeechRecognitionEngine:
             raise FileNotFoundError(f"Audio file does not exist: {audio_path}")
 
         try:
-            with sr.AudioFile(str(audio_path)) as source:
+            audio_source_input = _audio_to_wav_stream(audio_path)
+            with sr.AudioFile(audio_source_input if isinstance(audio_source_input, str) or hasattr(audio_source_input, "read") else str(audio_source_input)) as source:
                 audio_data = self.recognizer.record(source)
 
             # Request detailed response with confidence score if available

@@ -4,6 +4,7 @@ import hashlib
 import logging
 import mimetypes
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -110,11 +111,37 @@ def _database_confidence(confidence_score: float | None) -> float | None:
 def _database_date(value: str | None) -> str | None:
     if not value:
         return None
-    for pattern in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%m/%d/%Y", "%d/%m/%y", "%d-%m-%y", "%Y/%m/%d"):
+    cleaned = value.strip()
+    # Strip ordinals like 1st, 2nd, 3rd, 19th
+    cleaned_no_ordinal = re.sub(r"(?<=\d)(?:st|nd|rd|th)\b", "", cleaned, flags=re.IGNORECASE)
+    formats = (
+        "%Y-%m-%d",
+        "%d/%m/%Y",
+        "%d-%m-%Y",
+        "%m/%d/%Y",
+        "%d/%m/%y",
+        "%d-%m-%y",
+        "%Y/%m/%d",
+        "%B %d, %Y",
+        "%B %d %Y",
+        "%b %d, %Y",
+        "%b %d %Y",
+        "%d %B %Y",
+        "%d %b %Y",
+    )
+    for pattern in formats:
         try:
-            return datetime.strptime(value.strip(), pattern).date().isoformat()
+            return datetime.strptime(cleaned_no_ordinal, pattern).date().isoformat()
         except ValueError:
             continue
+    # Month + Day without year: default to current year
+    for pattern in ("%B %d", "%b %d", "%d %B", "%d %b"):
+        try:
+            dt = datetime.strptime(cleaned_no_ordinal, pattern)
+            return dt.replace(year=datetime.now().year).date().isoformat()
+        except ValueError:
+            continue
+
     match = re.search(r"\b\d{4}-\d{2}-\d{2}\b", value)
     if match:
         return match.group(0)

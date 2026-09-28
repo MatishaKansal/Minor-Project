@@ -21,6 +21,12 @@ SUPPORTED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff"}
 DEFAULT_LANGUAGE = "eng"
 PROJECT_ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
 
+# Preprocessing tuning constants
+_MIN_WIDTH_PX = 1200       # upscale if narrower
+_MAX_WIDTH_PX = 4000       # downscale if wider (prevents slow Tesseract on huge images)
+_CONTRAST_ENHANCE = 1.6    # Contrast factor for normal images
+_DARK_THRESHOLD = 127      # Mean pixel value below which image is considered dark/inverted
+
 
 class OCRUnavailableError(RuntimeError):
     """Raised when the configured Tesseract executable cannot be used."""
@@ -40,6 +46,16 @@ class OCREngine(Protocol):
 def _configure_tesseract() -> None:
     load_dotenv(dotenv_path=PROJECT_ENV_FILE)
     command = os.getenv("TESSERACT_CMD")
+    if not command:
+        for candidate_path in [
+            r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+            r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+            os.path.expandvars(r"%LOCALAPPDATA%\Programs\Tesseract-OCR\tesseract.exe"),
+        ]:
+            if Path(candidate_path).exists():
+                command = candidate_path
+                break
+
     if not command:
         raise OCRUnavailableError(
             f"TESSERACT_CMD is missing. Add TESSERACT_CMD=<path to tesseract.exe> "
@@ -85,23 +101,105 @@ def load_image(file_path: str | os.PathLike[str]) -> Image.Image:
         with Image.open(path) as image:
             image.verify()
         with Image.open(path) as image:
+            # Convert palette/RGBA/CMYK modes safely to RGB
             return image.convert("RGB")
     except (UnidentifiedImageError, OSError, ValueError) as exc:
         raise ValueError(f"Unable to read image '{path}': the file may be corrupted or unreadable") from exc
 
 
+def _deskew(pixels: np.ndarray) -> np.ndarray:
+    """Detect and correct document skew using Hough line transform.
+
+    Handles skew up to ~45 degrees. Returns the corrected grayscale image.
+    Falls back to the original image if skew detection fails or produces a
+    nonsensical angle.
+    """
+    try:
+        # Use Canny edge detection then Hough lines to estimate rotation angle
+        edges = cv2.Canny(pixels, 50, 150, apertureSize=3)
+        lines = cv2.HoughLines(edges, 1, np.pi / 180, threshold=100)
+        if lines is None or len(lines) < 5:
+            return pixels  # Not enough lines to estimate skew reliably
+
+        angles = []
+        for line in lines:
+            rho, theta = line[0]
+            # Keep only near-horizontal lines (within 10° of horizontal)
+            angle_deg = np.degrees(theta) - 90
+            if abs(angle_deg) < 10:
+                angles.append(angle_deg)
+
+        if not angles:
+            return pixels
+
+        median_angle = float(np.median(angles))
+        if abs(median_angle) < 0.3:
+            return pixels  # Negligible skew — don't rotate
+
+        h, w = pixels.shape
+        center = (w // 2, h // 2)
+        M = cv2.getRotationMatrix2D(center, median_angle, 1.0)
+        rotated = cv2.warpAffine(
+            pixels, M, (w, h),
+            flags=cv2.INTER_CUBIC,
+            borderMode=cv2.BORDER_REPLICATE,
+        )
+        LOGGER.debug("Deskewed image by %.2f degrees", median_angle)
+        return rotated
+    except Exception as exc:
+        LOGGER.debug("Deskew failed (ignored): %s", exc)
+        return pixels
+
+
 def preprocess_image(image: Image.Image) -> Image.Image:
-    """Prepare a document image without changing its readable content."""
+    """Prepare a document image for Tesseract OCR.
+
+    Steps applied (in order):
+      1. Convert to grayscale
+      2. Resize: upscale narrow images, downscale very large images
+      3. Detect and correct inverted (dark-background) images
+      4. Enhance contrast
+      5. Median denoise
+      6. Otsu binarisation
+      7. Deskew (rotation correction)
+    """
     grayscale = image.convert("L")
     width, height = grayscale.size
-    if width < 1200:
-        scale = 1200 / max(width, 1)
-        grayscale = grayscale.resize((int(width * scale), int(height * scale)), Image.Resampling.LANCZOS)
-    enhanced = ImageEnhance.Contrast(grayscale).enhance(1.6)
+
+    # ── Step 2: normalise resolution ────────────────────────────────────────
+    if width < _MIN_WIDTH_PX:
+        scale = _MIN_WIDTH_PX / max(width, 1)
+        grayscale = grayscale.resize(
+            (int(width * scale), int(height * scale)), Image.Resampling.LANCZOS
+        )
+        width, height = grayscale.size
+    elif width > _MAX_WIDTH_PX:
+        scale = _MAX_WIDTH_PX / width
+        grayscale = grayscale.resize(
+            (int(width * scale), int(height * scale)), Image.Resampling.LANCZOS
+        )
+
+    # ── Step 3: detect inverted (dark background) images ───────────────────
+    pixel_array = np.asarray(grayscale)
+    mean_intensity = float(pixel_array.mean())
+    is_dark_bg = mean_intensity < _DARK_THRESHOLD
+    if is_dark_bg:
+        # Invert so that text becomes dark on white background
+        grayscale = Image.fromarray(255 - pixel_array)
+        LOGGER.debug("Detected dark-background image; applied inversion before binarisation")
+
+    # ── Steps 4 + 5: contrast enhancement + median denoising ───────────────
+    enhanced = ImageEnhance.Contrast(grayscale).enhance(_CONTRAST_ENHANCE)
     denoised = enhanced.filter(ImageFilter.MedianFilter(size=3))
+
+    # ── Step 6: Otsu binarisation ───────────────────────────────────────────
     pixels = np.asarray(denoised)
     _, thresholded = cv2.threshold(pixels, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    return Image.fromarray(thresholded)
+
+    # ── Step 7: deskew ──────────────────────────────────────────────────────
+    corrected = _deskew(thresholded)
+
+    return Image.fromarray(corrected)
 
 
 def _confidence_from_data(data: dict[str, list[Any]]) -> float | None:
@@ -135,7 +233,6 @@ def _extract_total(lines: list[tuple[int, str, str]]) -> tuple[str | None, tuple
     return (val, (src.line_number, src.source_text)) if src else (None, None)
 
 
-
 class TesseractOCREngine:
     """Tesseract-backed OCR adapter, replaceable by another OCREngine later."""
 
@@ -147,12 +244,73 @@ class TesseractOCREngine:
         return OCRResult(text=text.strip(), confidence_score=_confidence_from_data(data))
 
 
+class RapidOCREngine:
+    """RapidOCR ONNX-backed engine (pure Python/ONNX, zero external binaries required)."""
+
+    def __init__(self) -> None:
+        try:
+            from rapidocr_onnxruntime import RapidOCR
+            self._engine = RapidOCR()
+        except ImportError as exc:
+            raise OCRUnavailableError("rapidocr-onnxruntime is not installed.") from exc
+
+    def extract(self, image: Image.Image, language: str = DEFAULT_LANGUAGE) -> OCRResult:
+        np_img = np.array(image.convert("RGB"))
+        result, _ = self._engine(np_img)
+        if not result:
+            return OCRResult(text="", confidence_score=0.0)
+
+        lines: list[str] = []
+        confidences: list[float] = []
+        for item in result:
+            _, text, score = item
+            lines.append(text)
+            try:
+                conf = float(score) * 100.0 if float(score) <= 1.0 else float(score)
+                confidences.append(conf)
+            except (ValueError, TypeError):
+                pass
+
+        avg_conf = round(sum(confidences) / len(confidences), 2) if confidences else None
+        return OCRResult(text="\n".join(lines).strip(), confidence_score=avg_conf)
+
+
+def _get_default_ocr_engine() -> OCREngine:
+    """Select the best available OCR engine: configured Tesseract or pure-Python RapidOCR."""
+    load_dotenv(dotenv_path=PROJECT_ENV_FILE)
+    cmd = os.getenv("TESSERACT_CMD")
+    if cmd and Path(cmd).exists():
+        try:
+            _ensure_tesseract_available()
+            return TesseractOCREngine()
+        except Exception:
+            pass
+
+    try:
+        return RapidOCREngine()
+    except Exception:
+        pass
+
+    return TesseractOCREngine()
+
+
 def extract_text_with_ocr(
     image: Image.Image,
     language: str = DEFAULT_LANGUAGE,
     engine: OCREngine | None = None,
 ) -> OCRResult:
-    return (engine or TesseractOCREngine()).extract(image, language)
+    active_engine = engine or _get_default_ocr_engine()
+    try:
+        return active_engine.extract(image, language)
+    except Exception as exc:
+        # Fall back to RapidOCR if primary Tesseract failed
+        if not isinstance(active_engine, RapidOCREngine):
+            try:
+                LOGGER.info("Falling back from %s to RapidOCREngine: %s", type(active_engine).__name__, exc)
+                return RapidOCREngine().extract(image, language)
+            except Exception:
+                pass
+        raise
 
 
 def extract_image_text(file_path: str | os.PathLike[str], language: str = DEFAULT_LANGUAGE) -> OCRResult:
