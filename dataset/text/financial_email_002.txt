@@ -1,0 +1,11 @@
+From: invoices@orbitutilities.com
+To: accounts@smallbiz.com
+Date: September 14, 2026
+Subject: Invoice Received - Invoice #8002
+
+Hi Team,
+
+Please find the details for invoice #8002. The invoice total is ₹450.00, for internet and utilities. Payment is due by September 24, 2026. Kindly confirm receipt of this invoice.
+
+Thanks,
+Orbitutilities Finance Department

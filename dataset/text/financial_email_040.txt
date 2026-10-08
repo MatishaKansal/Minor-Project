@@ -1,0 +1,17 @@
+From: payments@bank.example
+To: accounts@smallbiz.com
+Date: October 16, 2026
+Subject: Payment Failed - Invoice #8040
+
+Hi Team,
+
+The attempted payment of ₹12,500.00 to Cloudworks Services could not be completed. Transaction reference: TXN202610160040. Please verify the beneficiary details and retry the payment.
+
+Reference details:
+Invoice number: INV-8040
+Purchase order: PO-4040
+Amount: ₹12,500.00
+
+
+Thanks,
+Cloudworks Finance Department

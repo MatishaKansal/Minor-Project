@@ -1,0 +1,17 @@
+From: billing@northstarconsulting.com
+To: accounts@smallbiz.com
+Date: September 27, 2026
+Subject: Overdue Payment Notice - Invoice #8048
+
+Hi Team,
+
+Our records show that invoice #8048 for ₹1,200.00 is overdue. A late fee of ₹75.00 may be applied if payment is not received by October 07, 2026. Please contact billing if payment has already been made.
+
+Reference details:
+Invoice number: INV-8048
+Purchase order: PO-4048
+Amount: ₹1,200.00
+
+
+Thanks,
+Northstarconsulting Finance Department

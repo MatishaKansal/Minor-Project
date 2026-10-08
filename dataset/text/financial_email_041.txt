@@ -1,0 +1,11 @@
+From: billing@zenithservices.com
+To: accounts@smallbiz.com
+Date: September 08, 2026
+Subject: Payment Reminder - Invoice #8041
+
+Hi Team,
+
+This is a reminder that invoice #8041 for ₹1,200.00 remains outstanding. The original due date was September 15, 2026. Please arrange payment at the earliest to avoid any late charges.
+
+Thanks,
+Zenithservices Finance Department

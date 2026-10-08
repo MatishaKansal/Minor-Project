@@ -1,0 +1,11 @@
+From: procurement@smallbiz.com
+To: finance@orbitutilities.com
+Date: September 04, 2026
+Subject: Supplier Payment Request - Invoice #8034
+
+Hi Team,
+
+Please process payment of ₹18,500.00 for purchase order #4034. The goods/services relate to equipment maintenance. We have approved the invoice for payment and request settlement by September 11, 2026.
+
+Thanks,
+Orbitutilities Finance Department

@@ -1,0 +1,17 @@
+From: procurement@smallbiz.com
+To: finance@softwarecorp.com
+Date: September 03, 2026
+Subject: Supplier Payment Request - Invoice #8024
+
+Hi Team,
+
+Please process payment of ₹2,450.00 for purchase order #4024. The goods/services relate to office supplies. We have approved the invoice for payment and request settlement by September 18, 2026.
+
+Reference details:
+Invoice number: INV-8024
+Purchase order: PO-4024
+Amount: ₹2,450.00
+
+
+Thanks,
+Softwarecorp Finance Department

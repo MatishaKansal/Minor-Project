@@ -1,0 +1,17 @@
+From: procurement@smallbiz.com
+To: finance@cloudworks.com
+Date: October 06, 2026
+Subject: Supplier Payment Request - Invoice #8044
+
+Hi Team,
+
+Please process payment of ₹1,200.00 for purchase order #4044. The goods/services relate to consulting services. We have approved the invoice for payment and request settlement by November 05, 2026.
+
+Reference details:
+Invoice number: INV-8044
+Purchase order: PO-4044
+Amount: ₹1,200.00
+
+
+Thanks,
+Cloudworks Finance Department

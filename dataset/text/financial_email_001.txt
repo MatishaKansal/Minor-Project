@@ -1,0 +1,11 @@
+From: billing@acmesupplies.com
+To: accounts@smallbiz.com
+Date: September 09, 2026
+Subject: Payment Reminder - Invoice #8001
+
+Hi Team,
+
+This is a reminder that invoice #8001 for ₹2,450.00 remains outstanding. The original due date was September 16, 2026. Please arrange payment at the earliest to avoid any late charges.
+
+Thanks,
+Acmesupplies Finance Department

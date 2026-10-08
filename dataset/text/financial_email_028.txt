@@ -1,0 +1,18 @@
+From: billing@acmesupplies.com
+To: accounts@smallbiz.com
+Date: September 29, 2026
+Subject: Overdue Payment Notice - Invoice #8028
+
+Hi Team,
+
+Our records show that invoice #8028 for ₹2,450.00 is overdue. A late fee of ₹150.00 may be applied if payment is not received by October 09, 2026. Please contact billing if payment has already been made.
+
+Reference details:
+Invoice number: INV-8028
+Purchase order: PO-4028
+Amount: ₹2,450.00
+
+Please note that the payment date recorded in our system is September 29, 2026.
+
+Thanks,
+Acmesupplies Finance Department

@@ -1,0 +1,11 @@
+From: payments@bank.example
+To: accounts@smallbiz.com
+Date: September 15, 2026
+Subject: Payment Failed - Invoice #8010
+
+Hi Team,
+
+The attempted payment of ₹37,500.00 to Brightprint Services could not be completed. Transaction reference: TXN202609150010. Please verify the beneficiary details and retry the payment.
+
+Thanks,
+Brightprint Finance Department

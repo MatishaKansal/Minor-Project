@@ -1,0 +1,11 @@
+From: manager@smallbiz.com
+To: accounts@smallbiz.com
+Date: October 09, 2026
+Subject: Expense Approval - Invoice #8005
+
+Hi Team,
+
+The expense claim submitted by Ananya Sharma for ₹5,200.00 has been approved. The expense relates to internet and utilities. Please include it in the next payment run.
+
+Thanks,
+Acmesupplies Finance Department

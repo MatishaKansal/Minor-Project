@@ -1,0 +1,12 @@
+From: invoices@rapidlogistics.com
+To: accounts@smallbiz.com
+Date: September 14, 2026
+Subject: Invoice Received - Invoice #8042
+
+Hi Team,
+
+Please find the details for invoice #8042. The invoice total is ₹2,450.00, for software maintenance. Payment is due by September 29, 2026. Kindly confirm receipt of this invoice.
+Please note that the payment date recorded in our system is September 14, 2026.
+
+Thanks,
+Rapidlogistics Finance Department

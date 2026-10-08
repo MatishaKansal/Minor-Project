@@ -1,0 +1,11 @@
+From: billing@greenlineoffice.com
+To: accounts@smallbiz.com
+Date: September 01, 2026
+Subject: Payment Reminder - Invoice #8031
+
+Hi Team,
+
+This is a reminder that invoice #8031 for ₹1,200.00 remains outstanding. The original due date was October 01, 2026. Please arrange payment at the earliest to avoid any late charges.
+
+Thanks,
+Greenlineoffice Finance Department

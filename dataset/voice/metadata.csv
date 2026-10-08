@@ -1,0 +1,21 @@
+filename,audio_type,duration_seconds,associated_text
+voice_01.wav,synthetic_non_speech,5.0,Your invoice for the monthly software subscription has been approved for payment.
+voice_02.wav,synthetic_non_speech,5.0,Please confirm that the bank transfer for invoice number 4821 was received.
+voice_03.wav,synthetic_non_speech,5.0,The outstanding balance on the account is one thousand two hundred dollars.
+voice_04.wav,synthetic_non_speech,5.0,We noticed a discrepancy between the purchase order and the supplier invoice.
+voice_05.wav,synthetic_non_speech,5.0,The payment is scheduled to be processed on Friday afternoon.
+voice_06.wav,synthetic_non_speech,5.0,Your reimbursement request has been approved by the finance department.
+voice_07.wav,synthetic_non_speech,5.0,The transaction was declined because the account balance was insufficient.
+voice_08.wav,synthetic_non_speech,5.0,Please send the updated receipt so that we can complete the expense review.
+voice_09.wav,synthetic_non_speech,5.0,The supplier has confirmed delivery of the equipment ordered last week.
+voice_10.wav,synthetic_non_speech,5.0,An additional late fee will apply if the outstanding invoice remains unpaid.
+voice_11.wav,synthetic_non_speech,5.0,The refund has been initiated and should appear in the account within five business days.
+voice_12.wav,synthetic_non_speech,5.0,"According to our records, the payment was completed successfully yesterday."
+voice_13.wav,synthetic_non_speech,5.0,Please review the attached statement and confirm that all transactions are correct.
+voice_14.wav,synthetic_non_speech,5.0,The purchase order total does not match the amount shown on the invoice.
+voice_15.wav,synthetic_non_speech,5.0,We have received your payment request and it is now under review.
+voice_16.wav,synthetic_non_speech,5.0,The accounting team needs the original receipt before approving this expense.
+voice_17.wav,synthetic_non_speech,5.0,The bank statement shows a transfer that does not appear in the company ledger.
+voice_18.wav,synthetic_non_speech,5.0,Your subscription renewal has been charged to the business account.
+voice_19.wav,synthetic_non_speech,5.0,Please confirm the tax amount listed on the invoice before we process payment.
+voice_20.wav,synthetic_non_speech,5.0,The monthly financial reconciliation is complete and no further action is required.

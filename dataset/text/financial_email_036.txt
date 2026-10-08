@@ -1,0 +1,17 @@
+From: support@orbitutilities.com
+To: accounts@smallbiz.com
+Date: September 27, 2026
+Subject: Refund Notification - Invoice #8036
+
+Hi Team,
+
+A refund of ₹24,000.00 for invoice #8036 has been processed. The refund reference is TXN202609270036. The amount should appear in the business account within 3–5 working days.
+
+Reference details:
+Invoice number: INV-8036
+Purchase order: PO-4036
+Amount: ₹24,000.00
+
+
+Thanks,
+Orbitutilities Finance Department

@@ -1,0 +1,11 @@
+From: accounts@smallbiz.com
+To: billing@greenlineoffice.com
+Date: October 08, 2026
+Subject: Payment Confirmation - Invoice #8023
+
+Hi Team,
+
+We confirm that payment of ₹5,200.00 against invoice #8023 has been initiated through IMPS. The payment reference is TXN202610080023. Please confirm once the amount is credited.
+
+Thanks,
+Greenlineoffice Finance Department

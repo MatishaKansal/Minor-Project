@@ -1,0 +1,11 @@
+From: manager@smallbiz.com
+To: accounts@smallbiz.com
+Date: September 25, 2026
+Subject: Expense Approval - Invoice #8015
+
+Hi Team,
+
+The expense claim submitted by Neha Verma for ₹875.00 has been approved. The expense relates to internet and utilities. Please include it in the next payment run.
+
+Thanks,
+Northstarconsulting Finance Department

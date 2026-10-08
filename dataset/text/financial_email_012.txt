@@ -1,0 +1,17 @@
+From: invoices@greenlineoffice.com
+To: accounts@smallbiz.com
+Date: September 10, 2026
+Subject: Invoice Received - Invoice #8012
+
+Hi Team,
+
+Please find the details for invoice #8012. The invoice total is ₹37,500.00, for equipment maintenance. Payment is due by September 25, 2026. Kindly confirm receipt of this invoice.
+
+Reference details:
+Invoice number: INV-8012
+Purchase order: PO-4012
+Amount: ₹37,500.00
+
+
+Thanks,
+Greenlineoffice Finance Department

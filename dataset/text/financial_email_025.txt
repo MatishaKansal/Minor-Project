@@ -1,0 +1,11 @@
+From: manager@smallbiz.com
+To: accounts@smallbiz.com
+Date: September 14, 2026
+Subject: Expense Approval - Invoice #8025
+
+Hi Team,
+
+The expense claim submitted by Priya Kapoor for ₹37,500.00 has been approved. The expense relates to monthly logistics services. Please include it in the next payment run.
+
+Thanks,
+Zenithservices Finance Department

@@ -1,0 +1,12 @@
+From: manager@smallbiz.com
+To: accounts@smallbiz.com
+Date: September 26, 2026
+Subject: Expense Approval - Invoice #8035
+
+Hi Team,
+
+The expense claim submitted by Ananya Sharma for ₹37,500.00 has been approved. The expense relates to marketing services. Please include it in the next payment run.
+Please note that the payment date recorded in our system is September 26, 2026.
+
+Thanks,
+Acmesupplies Finance Department

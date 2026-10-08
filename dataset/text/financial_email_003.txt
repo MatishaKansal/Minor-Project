@@ -1,0 +1,11 @@
+From: accounts@smallbiz.com
+To: billing@zenithservices.com
+Date: September 29, 2026
+Subject: Payment Confirmation - Invoice #8003
+
+Hi Team,
+
+We confirm that payment of ₹8,750.00 against invoice #8003 has been initiated through NEFT. The payment reference is TXN202609290003. Please confirm once the amount is credited.
+
+Thanks,
+Zenithservices Finance Department

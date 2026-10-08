@@ -1,0 +1,11 @@
+From: payments@bank.example
+To: accounts@smallbiz.com
+Date: September 27, 2026
+Subject: Payment Failed - Invoice #8030
+
+Hi Team,
+
+The attempted payment of ₹2,450.00 to Zenithservices Services could not be completed. Transaction reference: TXN202609270030. Please verify the beneficiary details and retry the payment.
+
+Thanks,
+Zenithservices Finance Department

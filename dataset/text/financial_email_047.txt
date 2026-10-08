@@ -1,0 +1,11 @@
+From: bank-alerts@bank.example
+To: accounts@smallbiz.com
+Date: September 10, 2026
+Subject: Bank Transfer Confirmation - Invoice #8047
+
+Hi Team,
+
+A transfer of ₹8,750.00 has been processed from the business account. Transaction reference: TXN202609100047. Beneficiary: Acmesupplies Services. The transfer was initiated for printing services.
+
+Thanks,
+Acmesupplies Finance Department

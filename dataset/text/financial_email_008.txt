@@ -1,0 +1,17 @@
+From: billing@acmesupplies.com
+To: accounts@smallbiz.com
+Date: September 11, 2026
+Subject: Overdue Payment Notice - Invoice #8008
+
+Hi Team,
+
+Our records show that invoice #8008 for ₹12,500.00 is overdue. A late fee of ₹75.00 may be applied if payment is not received by September 26, 2026. Please contact billing if payment has already been made.
+
+Reference details:
+Invoice number: INV-8008
+Purchase order: PO-4008
+Amount: ₹12,500.00
+
+
+Thanks,
+Acmesupplies Finance Department

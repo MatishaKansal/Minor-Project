@@ -1,0 +1,11 @@
+From: billing@rapidlogistics.com
+To: accounts@smallbiz.com
+Date: September 24, 2026
+Subject: Overdue Payment Notice - Invoice #8018
+
+Hi Team,
+
+Our records show that invoice #8018 for ₹2,450.00 is overdue. A late fee of ₹50.00 may be applied if payment is not received by October 04, 2026. Please contact billing if payment has already been made.
+
+Thanks,
+Rapidlogistics Finance Department

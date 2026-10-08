@@ -1,0 +1,12 @@
+From: bank-alerts@bank.example
+To: accounts@smallbiz.com
+Date: September 19, 2026
+Subject: Bank Transfer Confirmation - Invoice #8007
+
+Hi Team,
+
+A transfer of ₹450.00 has been processed from the business account. Transaction reference: TXN202609190007. Beneficiary: Orbitutilities Services. The transfer was initiated for monthly logistics services.
+Please note that the payment date recorded in our system is September 19, 2026.
+
+Thanks,
+Orbitutilities Finance Department

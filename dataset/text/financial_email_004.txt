@@ -1,0 +1,17 @@
+From: procurement@smallbiz.com
+To: finance@northstarconsulting.com
+Date: September 14, 2026
+Subject: Supplier Payment Request - Invoice #8004
+
+Hi Team,
+
+Please process payment of ₹3,800.00 for purchase order #4004. The goods/services relate to internet and utilities. We have approved the invoice for payment and request settlement by September 29, 2026.
+
+Reference details:
+Invoice number: INV-8004
+Purchase order: PO-4004
+Amount: ₹3,800.00
+
+
+Thanks,
+Northstarconsulting Finance Department

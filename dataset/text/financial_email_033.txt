@@ -1,0 +1,11 @@
+From: accounts@smallbiz.com
+To: billing@greenlineoffice.com
+Date: September 21, 2026
+Subject: Payment Confirmation - Invoice #8033
+
+Hi Team,
+
+We confirm that payment of ₹18,500.00 against invoice #8033 has been initiated through NEFT. The payment reference is TXN202609210033. Please confirm once the amount is credited.
+
+Thanks,
+Greenlineoffice Finance Department

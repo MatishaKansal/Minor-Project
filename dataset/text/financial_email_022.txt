@@ -1,0 +1,11 @@
+From: invoices@zenithservices.com
+To: accounts@smallbiz.com
+Date: September 29, 2026
+Subject: Invoice Received - Invoice #8022
+
+Hi Team,
+
+Please find the details for invoice #8022. The invoice total is ₹8,750.00, for monthly logistics services. Payment is due by October 29, 2026. Kindly confirm receipt of this invoice.
+
+Thanks,
+Zenithservices Finance Department

@@ -1,0 +1,11 @@
+From: accounts@smallbiz.com
+To: billing@rapidlogistics.com
+Date: September 18, 2026
+Subject: Payment Confirmation - Invoice #8043
+
+Hi Team,
+
+We confirm that payment of ₹37,500.00 against invoice #8043 has been initiated through NEFT. The payment reference is TXN202609180043. Please confirm once the amount is credited.
+
+Thanks,
+Rapidlogistics Finance Department

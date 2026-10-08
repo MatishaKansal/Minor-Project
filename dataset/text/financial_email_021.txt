@@ -1,0 +1,12 @@
+From: billing@northstarconsulting.com
+To: accounts@smallbiz.com
+Date: October 04, 2026
+Subject: Payment Reminder - Invoice #8021
+
+Hi Team,
+
+This is a reminder that invoice #8021 for ₹1,200.00 remains outstanding. The original due date was November 03, 2026. Please arrange payment at the earliest to avoid any late charges.
+Please note that the payment date recorded in our system is October 04, 2026.
+
+Thanks,
+Northstarconsulting Finance Department

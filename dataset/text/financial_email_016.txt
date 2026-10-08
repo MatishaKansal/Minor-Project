@@ -1,0 +1,17 @@
+From: support@zenithservices.com
+To: accounts@smallbiz.com
+Date: September 18, 2026
+Subject: Refund Notification - Invoice #8016
+
+Hi Team,
+
+A refund of ₹37,500.00 for invoice #8016 has been processed. The refund reference is TXN202609180016. The amount should appear in the business account within 3–5 working days.
+
+Reference details:
+Invoice number: INV-8016
+Purchase order: PO-4016
+Amount: ₹37,500.00
+
+
+Thanks,
+Zenithservices Finance Department

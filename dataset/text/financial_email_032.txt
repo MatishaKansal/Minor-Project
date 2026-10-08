@@ -1,0 +1,17 @@
+From: invoices@brightprint.com
+To: accounts@smallbiz.com
+Date: September 10, 2026
+Subject: Invoice Received - Invoice #8032
+
+Hi Team,
+
+Please find the details for invoice #8032. The invoice total is ₹18,500.00, for software maintenance. Payment is due by September 20, 2026. Kindly confirm receipt of this invoice.
+
+Reference details:
+Invoice number: INV-8032
+Purchase order: PO-4032
+Amount: ₹18,500.00
+
+
+Thanks,
+Brightprint Finance Department

@@ -1,0 +1,11 @@
+From: manager@smallbiz.com
+To: accounts@smallbiz.com
+Date: September 24, 2026
+Subject: Expense Approval - Invoice #8045
+
+Hi Team,
+
+The expense claim submitted by Rahul Mehta for ₹18,500.00 has been approved. The expense relates to office supplies. Please include it in the next payment run.
+
+Thanks,
+Acmesupplies Finance Department

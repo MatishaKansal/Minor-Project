@@ -1,0 +1,11 @@
+From: billing@cloudworks.com
+To: accounts@smallbiz.com
+Date: October 07, 2026
+Subject: Overdue Payment Notice - Invoice #8038
+
+Hi Team,
+
+Our records show that invoice #8038 for ₹12,500.00 is overdue. A late fee of ₹150.00 may be applied if payment is not received by October 14, 2026. Please contact billing if payment has already been made.
+
+Thanks,
+Cloudworks Finance Department

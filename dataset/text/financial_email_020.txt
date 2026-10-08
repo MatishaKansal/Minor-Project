@@ -1,0 +1,17 @@
+From: payments@bank.example
+To: accounts@smallbiz.com
+Date: October 02, 2026
+Subject: Payment Failed - Invoice #8020
+
+Hi Team,
+
+The attempted payment of ₹875.00 to Softwarecorp Services could not be completed. Transaction reference: TXN202610020020. Please verify the beneficiary details and retry the payment.
+
+Reference details:
+Invoice number: INV-8020
+Purchase order: PO-4020
+Amount: ₹875.00
+
+
+Thanks,
+Softwarecorp Finance Department
