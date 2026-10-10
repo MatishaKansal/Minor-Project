@@ -183,14 +183,7 @@ def test_parse_unsupported_bank_csv_format_fails(tmp_path: Path):
     assert "Unsupported CSV format" in result.error
 
 
-def test_parse_bank_csv_persists_to_database_with_mock(monkeypatch):
-    import backend.database.supabase_repository as repo
-
-    def mock_persist_bank_statement_evidence(csv_text, evidence, source_name="bank_statement.csv", business_id=None, file_type="bank_statement", client=None):
-        return {"file_id": "bank-file-uuid-1", "evidence_id": "bank-evidence-uuid-2"}
-
-    monkeypatch.setattr(repo, "persist_bank_statement_evidence", mock_persist_bank_statement_evidence)
-
+def test_bank_csv_persistence_reports_invoice_schema_limitation():
     csv_content = (
         "Date,Description,Amount,Balance\n"
         "2026-01-01,Deposit,1000.00,1000.00\n"
@@ -198,9 +191,8 @@ def test_parse_bank_csv_persists_to_database_with_mock(monkeypatch):
 
     result = parse_bank_csv_text(csv_content, persist_to_database=True)
 
-    assert result.processing_status == "success"
-    assert result.database_file_id == "bank-file-uuid-1"
-    assert result.database_evidence_id == "bank-evidence-uuid-2"
+    assert result.processing_status == "failed"
+    assert "stores invoices only" in result.error
 
 
 def test_bank_statement_evidence_schema_compatibility():

@@ -118,7 +118,7 @@ def _extract_date(lines: list[DocumentLine]) -> tuple[str | None, FieldSource | 
             continue
         # Try same line and next line
         search_text = clean
-        for off in (0, 1, 2):
+        for off in range(0, 13):
             ni = (lines.index((pno, lno, raw_line, clean)) if off == 0 else
                   (lines.index((pno, lno, raw_line, clean)) + off))
             if ni >= len(lines):
@@ -488,7 +488,7 @@ _DOC_LABEL_WORDS = frozenset({
 
 _DOC_LABEL_PATTERN = (
     r"(?:tax\s+invoice|simplified\s+tax\s+invoice"
-    r"|invoice|inv|receipt|slip|bill"
+    r"|invo[i1lx]ce|inv|receipt|slip|bill"
     r"|purchase\s+order|p\.?o\.?"
     r"|order|ref(?:erence)?)"
 )
@@ -533,13 +533,15 @@ def _extract_document_number(lines: list[DocumentLine]) -> tuple[str | None, Fie
     """Extract invoice/receipt/PO/reference number, handling split-line layouts."""
 
     def _lookahead(from_idx: int) -> tuple[str | None, FieldSource | None]:
-        for offset in (1, 2):
+        for offset in range(1, 16):
             ni = from_idx + offset
             if ni >= len(lines):
                 break
             npno, nlno, nraw, nclean = lines[ni]
             candidate = nclean.strip()
-            if _is_valid_ref(candidate):
+            compact = re.sub(r"[\s/-]", "", candidate)
+            looks_like_date = bool(re.fullmatch(r"\d{1,4}[./-]\d{1,2}[./-]\d{1,4}", candidate))
+            if len(compact) >= 4 and not looks_like_date and _is_valid_ref(candidate):
                 return candidate, FieldSource(npno, nlno, nraw)
         return None, None
 
@@ -629,6 +631,7 @@ _PARTY_SECTION_HEADERS = re.compile(
 
 def _extract_party_name(lines: list[DocumentLine]) -> tuple[str | None, FieldSource | None]:
     all_text = "\n".join(raw for _, _, raw, _ in lines)
+    invoice_document = bool(re.search(r"\b(?:invoice|credit\s+note|debit\s+note|GSTIN|HSN/SAC)\b", all_text, re.IGNORECASE))
 
     # 1. Explicitly labelled vendor/merchant line
     labeled = _first_match(
@@ -640,11 +643,17 @@ def _extract_party_name(lines: list[DocumentLine]) -> tuple[str | None, FieldSou
             if labeled in line:
                 return labeled, FieldSource(pno, lno, raw_line)
 
-    # 2. Spoken conversational pattern — "paid at Starbucks", "transferred to Shell", "from home decor"
-    spoken_match = re.search(
-        r"(?i)\b(?:to|at|from)\s+([A-Za-z][A-Za-z0-9\s&.\-]{1,50}?)(?:\s+the\s+total|\s+total|\s+amounting|\s+for|\s+on|\s+dated|\s+ref|\s+via|\s+and|\s+which|\s+cost|\s+priced|[,\.]|$)",
+    # Conversational payment wording can still contain an invoice reference,
+    # e.g. "received payment ... from ACME Corp for invoice INV-404".
+    payment_party_match = re.search(
+        r"(?i)\b(?:received|got|collected)\s+payment(?:\s+of\s+[^,]+)?\s+from\s+"
+        r"([A-Za-z][A-Za-z0-9\s&.\-]{1,50}?)(?:\s+for|\s+on|\s+via|[,\.]|$)",
         all_text,
     )
+    spoken_match = payment_party_match or (None if invoice_document else re.search(
+        r"(?i)\b(?:to|at|from)\s+([A-Za-z][A-Za-z0-9\s&.\-]{1,50}?)(?:\s+the\s+total|\s+total|\s+amounting|\s+for|\s+on|\s+dated|\s+ref|\s+via|\s+and|\s+which|\s+cost|\s+priced|[,\.]|$)",
+        all_text,
+    ))
     if spoken_match:
         candidate = spoken_match.group(1).strip()
         _spoken_blocked = {"the", "a", "an", "my", "our", "invoice", "receipt",
@@ -661,7 +670,7 @@ def _extract_party_name(lines: list[DocumentLine]) -> tuple[str | None, FieldSou
                     return candidate, FieldSource(pno, lno, raw_line)
 
     # 2b. Sign-off heuristic (e.g. "Thanks,\nSoftwareCorp Billing Dept")
-    signoff_match = re.search(
+    signoff_match = None if invoice_document else re.search(
         r"(?im)^\s*(?:thanks|thank\s+you|regards|best\s+regards|warm\s+regards|sincerely|cheers)[,\s]*\n+([A-Za-z0-9\s&.\-]{2,60})",
         all_text,
     )
@@ -752,7 +761,7 @@ def _extract_description(lines: list[DocumentLine]) -> tuple[str | None, FieldSo
                 ni = idx + off
                 if ni < len(lines):
                     cand = lines[ni][3].strip()
-                    if not re.search(r"\b(?:unit\s+cost|cost|quantity|qty|amount|price|rate|subtotal|tax)\b", cand, re.IGNORECASE):
+                    if not re.search(r"\b(?:unit\s+cost|cost|quantity|qty|amount|amt\.?|price|rate|subtotal|tax|gross|discount|net|HSN|SAC|serial)\b", cand, re.IGNORECASE):
                         if len(cand) >= 3 and not re.match(r"^\$?[\d,.]+$", cand) and cand.lower() not in _desc_blocked:
                             return cand, FieldSource(lines[ni][0], lines[ni][1], lines[ni][2])
 
@@ -800,6 +809,69 @@ def _extract_description(lines: list[DocumentLine]) -> tuple[str | None, FieldSo
     return None, None
 
 
+def _extract_indian_invoice_items(lines: list[DocumentLine]) -> list[dict[str, Any]]:
+    """Extract conservative item rows from common GST invoice table layouts.
+
+    Native PDF/OCR layouts often split each column onto its own line. This only
+    emits a row when an HSN/SAC code, a nearby description, and quantity are found.
+    """
+    items: list[dict[str, Any]] = []
+    hsn_re = re.compile(r"^(\d{4,8})$")
+    qty_re = re.compile(r"^(\d+(?:\.\d+)?)\s*([A-Za-z]{1,8})?$", re.IGNORECASE)
+    money_re = re.compile(r"^(?:₹\s*)?([\d,]+\.\d{2})$")
+    blocked = re.compile(r"serial|material|description|hsn|sac|quantity|qty|rate|gross|discount|net|gst|total|amount|tax|batch|mfg|manufactur|expiry|best before", re.IGNORECASE)
+
+    for idx, (_, _, _, clean) in enumerate(lines):
+        code = hsn_re.fullmatch(clean.strip())
+        if not code:
+            continue
+        description = None
+        for prior in range(idx - 1, max(-1, idx - 9), -1):
+            candidate = lines[prior][3].strip()
+            if candidate and re.search(r"[A-Za-z]{3}", candidate) and not blocked.search(candidate) and not re.fullmatch(r"[A-Z0-9/-]{3,16}", candidate):
+                description = candidate
+                break
+        # Some PDFs wrap the item name over two lines (the continuation is
+        # closest to HSN and may be only one word, e.g. "Moment").
+        if description and len(description) < 12:
+            for prior in range(idx - 1, max(-1, idx - 9), -1):
+                candidate = lines[prior][3].strip()
+                if candidate == description:
+                    continue
+                if blocked.search(candidate) or re.fullmatch(r"[A-Z0-9/-]{3,16}", candidate):
+                    continue
+                if re.search(r"[A-Za-z]{3}", candidate) and len(candidate) >= 8:
+                    description = f"{candidate} {description}"
+                    break
+        if not description:
+            continue
+
+        quantity = unit = unit_price = None
+        for nxt in range(idx + 1, min(len(lines), idx + 6)):
+            candidate = lines[nxt][3].strip()
+            qty = qty_re.fullmatch(candidate)
+            if qty and (qty.group(2) or candidate.isdigit()):
+                quantity, unit = qty.group(1), qty.group(2)
+                for price_idx in range(nxt + 1, min(len(lines), nxt + 4)):
+                    price = money_re.fullmatch(lines[price_idx][3].strip())
+                    if price:
+                        parsed_price = price.group(1).replace(",", "")
+                        unit_price = parsed_price if parsed_price != "0.00" else None
+                        break
+                break
+        if quantity is None:
+            continue
+        items.append({
+            "line_number": len(items) + 1,
+            "description": description,
+            "hsn_sac_code": code.group(1),
+            "quantity": quantity,
+            "unit": unit,
+            "unit_price": unit_price,
+        })
+    return items
+
+
 # ─── Top-level field extraction ───────────────────────────────────────────────
 
 def extract_financial_fields(input_data: str | list[tuple[int, str]]) -> dict[str, Any]:
@@ -820,7 +892,178 @@ def extract_financial_fields(input_data: str | list[tuple[int, str]]) -> dict[st
         "party_name": party_name,
         "invoice_number": invoice_number,
         "description": description,
+        "items": _extract_indian_invoice_items(lines),
     }
+
+    # India-focused invoice header fields. Keep uncertain address/party roles empty
+    # instead of assigning a nearby block based on position alone.
+    full_text = "\n".join(raw for _, _, raw, _ in lines)
+    upper_text = full_text.upper()
+    gstin_matches: list[re.Match[str]] = []
+    gstin_pattern = re.compile(
+        r"(?i)\b(?:GSTIN|GST\s*(?:IN|NO|NUMBER)|GST\s*REGISTRATION(?:\s*NO)?)"
+        r"\s*[:#-]?\s*([0-9A-Z](?:[\s-]*[0-9A-Z]){14})(?![0-9A-Z])"
+    )
+    for match in gstin_pattern.finditer(full_text):
+        compact = re.sub(r"[^0-9A-Z]", "", match.group(1).upper())
+        if re.fullmatch(r"\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]", compact):
+            gstin_matches.append(match)
+
+    def _gstin_value(match: re.Match[str]) -> str:
+        return re.sub(r"[^0-9A-Z]", "", match.group(1).upper())
+    pan_match = re.search(r"(?i)\bPAN\s*[:#-]?\s*([A-Z]{5}[0-9]{4}[A-Z])\b", full_text)
+
+    def _last_money(label_pattern: str) -> str | None:
+        match = re.search(label_pattern + r"[^\n\r]*", full_text, re.IGNORECASE)
+        if not match:
+            return None
+        values = re.findall(r"(?<![A-Z])(?:₹|INR\s*)?([0-9]{1,3}(?:,[0-9]{2,3})*(?:\.[0-9]{1,2})?|[0-9]+\.[0-9]{1,2})", match.group(0), re.IGNORECASE)
+        return _normalize_number(values[-1]) if values else None
+
+    def _last_decimal_money(label_pattern: str) -> str | None:
+        matches = list(re.finditer(label_pattern + r"[^\n\r]*", full_text, re.IGNORECASE))
+        for match in reversed(matches):
+            values = re.findall(r"(?<![A-Z])(?:₹|INR\s*)?([0-9]{1,3}(?:,[0-9]{2,3})*\.[0-9]{2}|[0-9]+\.[0-9]{2})", match.group(0), re.IGNORECASE)
+            if values:
+                return _normalize_number(values[-1])
+        return None
+
+    def _invoice_summary_total() -> str | None:
+        total = None
+        for idx, (_, _, _, line) in enumerate(lines):
+            if not re.search(r"^\s*total\s+amount\s*$|\bgrand\s+total\b", line, re.IGNORECASE):
+                continue
+            candidates: list[str] = []
+            for _, _, _, following in lines[idx:idx + 18]:
+                if re.search(r"\bamount\s+in\s+words\b", following, re.IGNORECASE):
+                    break
+                candidates.extend(_extract_monetary_candidates(following))
+            if candidates:
+                total = _normalize_number(candidates[-1])
+        return total
+
+    # Prevent a detached table header such as "Total Amt. (INR) 10" from
+    # being stored as a zero invoice total by the generic receipt amount parser.
+    if amount_source and re.search(r"\btotal\s+amt\.?\s*\(\s*INR\s*\)", amount_source.source_text, re.IGNORECASE):
+        amount = None
+        amount_source = None
+
+    due_date = None
+    for pno, lno, raw_line, clean in lines:
+        if re.search(r"\b(?:due\s+date|payment\s+due)\b", clean, re.IGNORECASE):
+            date_match = re.search(r"\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{4}-\d{2}-\d{2}", clean)
+            if date_match:
+                due_date = date_match.group(0)
+            else:
+                index = lines.index((pno, lno, raw_line, clean))
+                if index + 1 < len(lines):
+                    next_match = re.search(r"\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{4}-\d{2}-\d{2}", lines[index + 1][3])
+                    if next_match:
+                        due_date = next_match.group(0)
+            if due_date:
+                break
+
+    invoice_type = None
+    for label, value in ((r"\bcredit\s+note\b", "credit_note"), (r"\bdebit\s+note\b", "debit_note"), (r"\bbill\s+of\s+supply\b", "bill_of_supply"), (r"\btax\s+invoice\b", "tax_invoice"), (r"\binvoice\b", "invoice")):
+        if re.search(label, full_text, re.IGNORECASE):
+            invoice_type = value
+            break
+
+    # Use explicitly labeled fields where possible. GSTINs on Indian invoices
+    # commonly appear in seller-then-buyer order; preserve that convention as fallback.
+    seller_gstin = next((
+        _gstin_value(m) for m in gstin_matches
+        if re.search(
+            r"(?:seller|supplier|vendor|bill\s+from)[^\n]{0,80}GSTIN",
+            full_text[max(0, m.start() - 100):m.start() + 20],
+            re.IGNORECASE,
+        )
+    ), None)
+    buyer_gstin = next((
+        _gstin_value(m) for m in gstin_matches
+        if re.search(
+            r"(?:buyer|recipient|customer|bill\s+to|invoice\s+to)[^\n]{0,80}GSTIN",
+            full_text[max(0, m.start() - 100):m.start() + 20],
+            re.IGNORECASE,
+        )
+    ), None)
+    if gstin_matches:
+        seller_gstin = seller_gstin or _gstin_value(gstin_matches[0])
+        if len(gstin_matches) > 1:
+            buyer_gstin = buyer_gstin or _gstin_value(gstin_matches[1])
+
+    fields.update({
+        "invoice_date": date,
+        "due_date": due_date,
+        "invoice_type": invoice_type,
+        "seller_name": party_name,
+        "seller_gstin": seller_gstin,
+        "seller_pan": pan_match.group(1).upper() if pan_match else None,
+        "buyer_gstin": buyer_gstin,
+        "place_of_supply": _first_match([r"\bplace\s+of\s+supply[ \t]*[:#-]?[ \t]*([^\n]+)"], full_text),
+        "reverse_charge": (True if re.search(r"reverse\s+charge\s*[:#-]?\s*(?:yes|applicable|y)", full_text, re.IGNORECASE) else (False if re.search(r"reverse\s+charge\s*[:#-]?\s*(?:no|not\s+applicable|n)", full_text, re.IGNORECASE) else None)),
+        "subtotal": _last_money(r"\b(?:taxable\s+value|sub\s*total|subtotal)\b\s*[:#-]?\s*"),
+        "discount_amount": _last_money(r"\bdiscount(?:\s+amount)?\b\s*[:#-]?\s*"),
+        "cgst_total": _last_decimal_money(r"\bCGST(?:\s+total)?\b\s*[:#-]?\s*"),
+        "sgst_total": _last_decimal_money(r"\bSGST(?:/UGST)?(?:\s+total)?\b\s*[:#-]?\s*"),
+        "igst_total": _last_decimal_money(r"\bIGST(?:\s+total)?\b\s*[:#-]?\s*"),
+        "cess_total": _last_decimal_money(r"\bCESS(?:\s+total)?\b\s*[:#-]?\s*"),
+        "round_off": _last_money(r"\bround(?:ing)?\s*off\b\s*[:#-]?\s*"),
+        "invoice_total": _invoice_summary_total() or _last_money(r"\b(?:grand\s+total|invoice\s+total|total\s+amount|amount\s+payable|net\s+payable)\b\s*[:#-]?\s*"),
+        "currency": currency or ("INR" if re.search(r"\bINR\b|₹|\(INR\)", full_text, re.IGNORECASE) else None),
+        "payment_terms": _first_match([r"\bpayment\s+terms?[ \t]*[:#-]?[ \t]*([^\n]+)"], full_text),
+    })
+    if fields["place_of_supply"] is not None:
+        fields["place_of_supply"] = fields["place_of_supply"].strip(" :#-") or None
+    fields["buyer_name"] = _first_match([
+        r"(?im)^\s*(?:invoice\s+to|bill(?:ed)?\s+to|buyer|customer)\s*[:#-]\s*(.+?)\s*$",
+        r"(?im)^\s*(?:invoice\s+to|bill(?:ed)?\s+to|buyer|customer)\s*\n\s*([^\n]+)",
+    ], full_text)
+    if not fields["buyer_name"] and buyer_gstin:
+        gstin_line = next((idx for idx, item in enumerate(lines) if buyer_gstin in item[3]), None)
+        if gstin_line is not None:
+            name_markers = re.compile(r"\b(?:M/S|PVT|PRIVATE|LTD|LIMITED|AGENCY|TRADERS|ENTERPRISES|STORE|COMPANY|CORPORATION|DISTRIBUTORS|MARKETING)\b", re.IGNORECASE)
+            address_markers = re.compile(r"\b(?:khasra|village|road|street|district|state\s+code|pin\s*code|colony|nagar)\b|\d", re.IGNORECASE)
+            for idx in range(gstin_line - 1, max(-1, gstin_line - 13), -1):
+                candidate = lines[idx][3].strip()
+                if name_markers.search(candidate) and not address_markers.search(candidate):
+                    fields["buyer_name"] = candidate
+                    break
+    if not fields["buyer_name"]:
+        # Common invoice layouts put the buyer label on one line and the
+        # company name on the next, with the GSTIN much farther down the page.
+        for idx, (_, _, _, clean) in enumerate(lines):
+            if re.fullmatch(r"\s*(?:invoice\s+to|bill(?:ed)?\s+to|buyer|customer)\s*[:#-]?\s*", clean, re.IGNORECASE):
+                for _, _, _, candidate in lines[idx + 1:idx + 5]:
+                    candidate = candidate.strip()
+                    if (re.search(r"[A-Za-z]{3}", candidate)
+                            and not re.search(r"\b(?:GSTIN|state\s+code|delivery\s+address|place\s+of\s+supply)\b|\d{2}[A-Z]{5}\d{4}", candidate, re.IGNORECASE)
+                            and not re.search(r"\b(?:colony|road|street|nagar|district|pradesh|pin\s*code)\b|\d", candidate, re.IGNORECASE)):
+                        fields["buyer_name"] = candidate
+                        break
+                if fields["buyer_name"]:
+                    break
+    if fields["buyer_name"] and re.search(r"\b(?:khasra|village|road|street|district|state\s+code|pin\s*code)\b|\d", fields["buyer_name"], re.IGNORECASE):
+        fields["buyer_name"] = None
+    if fields["items"] and re.search(r"\b(?:invoice|credit\s+note|debit\s+note|GSTIN|HSN/SAC)\b", full_text, re.IGNORECASE):
+        fields["description"] = fields["items"][0]["description"]
+    if fields["amount"] == "0.00" and re.search(r"\b(?:paisa|paise)\s+only\b", full_text, re.IGNORECASE):
+        fields["amount"] = None
+        fields["invoice_total"] = _last_money(r"\b(?:grand\s+total|invoice\s+total|amount\s+payable|net\s+payable)\b\s*[:#-]?\s*")
+        if fields["invoice_total"] == "0.00":
+            fields["invoice_total"] = None
+    # GSTIN embeds the registered PAN in characters 3-12.
+    if fields["seller_gstin"]:
+        fields["seller_pan"] = fields["seller_gstin"][2:12]
+    if fields["buyer_gstin"]:
+        fields["buyer_pan"] = fields["buyer_gstin"][2:12]
+    fields["invoice_total"] = fields["invoice_total"] or fields["amount"]
+    fields["amount"] = fields["invoice_total"]
+    if fields["amount"] == "0.00" and re.search(r"\b(?:paisa|paise)\s+only\b", full_text, re.IGNORECASE):
+        # The words indicate a non-zero total, so an OCR-derived zero is contradictory.
+        # Leave it unset for review instead of persisting a known-wrong amount.
+        fields["invoice_total"] = None
+        fields["amount"] = None
 
     provenance: list[dict[str, Any]] = []
     for field_name, value, source, method in (
@@ -843,6 +1086,37 @@ def extract_financial_fields(input_data: str | list[tuple[int, str]]) -> dict[st
                     "confidence": None,
                 }
             )
+
+    # Invoice-specific columns receive matching provenance records so the UI can
+    # explain where each structured value came from.
+    for field_name in (
+        "invoice_date", "due_date", "invoice_type", "seller_name", "seller_gstin",
+        "seller_pan", "buyer_name", "buyer_gstin", "buyer_pan", "place_of_supply",
+        "subtotal", "discount_amount", "cgst_total", "sgst_total", "igst_total",
+        "cess_total", "round_off", "invoice_total", "payment_terms",
+    ):
+        value = fields.get(field_name)
+        if value is None:
+            continue
+        source = None
+        for pno, lno, raw_line, clean in lines:
+            if str(value).casefold() in clean.casefold():
+                source = FieldSource(pno, lno, raw_line)
+                break
+        if source is None:
+            # Derived aliases such as invoice_date and PAN-from-GSTIN retain the
+            # source location of the originating field.
+            source = date_source if field_name == "invoice_date" else party_source if field_name == "seller_name" else None
+        if source:
+            provenance.append({
+                "field_name": field_name,
+                "value": value,
+                "source_text": source.source_text,
+                "line_number": source.line_number,
+                "page_number": source.page_number,
+                "extraction_method": "indian_invoice_labeled_field",
+                "confidence": None,
+            })
 
     fields["provenance"] = provenance
     return fields

@@ -385,7 +385,7 @@ def parse_bank_csv_text(
             )
             evidence = evidence.model_copy(update={
                 "database_file_id": database_ids["file_id"],
-                "database_evidence_id": database_ids["evidence_id"],
+                "database_evidence_id": database_ids.get("invoice_id"),
             })
 
         return evidence
@@ -436,7 +436,7 @@ def parse_bank_csv_file(
             )
             evidence = evidence.model_copy(update={
                 "database_file_id": database_ids["file_id"],
-                "database_evidence_id": database_ids["evidence_id"],
+                "database_evidence_id": database_ids.get("invoice_id"),
             })
 
         return evidence

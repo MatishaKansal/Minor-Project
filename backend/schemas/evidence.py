@@ -13,6 +13,27 @@ class EvidenceProvenance(BaseModel):
     confidence: Optional[float] = None
 
 
+class InvoiceItem(BaseModel):
+    """Normalized product/service row extracted from an Indian invoice."""
+
+    model_config = ConfigDict(extra="allow")
+
+    line_number: Optional[int] = None
+    description: Optional[str] = None
+    hsn_sac_code: Optional[str] = None
+    quantity: Optional[str] = None
+    unit: Optional[str] = None
+    unit_price: Optional[str] = None
+    discount_amount: Optional[str] = None
+    taxable_value: Optional[str] = None
+    gst_rate: Optional[str] = None
+    cgst_amount: Optional[str] = None
+    sgst_amount: Optional[str] = None
+    igst_amount: Optional[str] = None
+    cess_amount: Optional[str] = None
+    line_total: Optional[str] = None
+
+
 class Evidence(BaseModel):
     """Structured evidence produced from one document, image, or text file."""
 
@@ -28,7 +49,9 @@ class Evidence(BaseModel):
     error: Optional[str] = None
     provenance: list[EvidenceProvenance] = Field(default_factory=list)
     database_file_id: Optional[str] = None
-    database_evidence_id: Optional[str] = None
+    database_evidence_id: Optional[str] = None  # Legacy alias for database_invoice_id.
+    database_invoice_id: Optional[str] = None
+    page_count: Optional[int] = None
 
     # Standard financial fields
     date: Optional[str] = None
@@ -37,6 +60,30 @@ class Evidence(BaseModel):
     party_name: Optional[str] = None
     invoice_number: Optional[str] = None
     description: Optional[str] = None
+    due_date: Optional[str] = None
+    invoice_type: Optional[str] = None
+    seller_name: Optional[str] = None
+    seller_gstin: Optional[str] = None
+    seller_pan: Optional[str] = None
+    seller_address: Optional[dict] = None
+    buyer_name: Optional[str] = None
+    buyer_gstin: Optional[str] = None
+    buyer_pan: Optional[str] = None
+    buyer_address: Optional[dict] = None
+    place_of_supply: Optional[str] = None
+    reverse_charge: Optional[bool] = None
+    subtotal: Optional[str] = None
+    discount_amount: Optional[str] = None
+    cgst_total: Optional[str] = None
+    sgst_total: Optional[str] = None
+    igst_total: Optional[str] = None
+    cess_total: Optional[str] = None
+    round_off: Optional[str] = None
+    invoice_total: Optional[str] = None
+    payment_terms: Optional[str] = None
+    notes: Optional[str] = None
+    items: list[InvoiceItem] = Field(default_factory=list)
+    payments: list[dict] = Field(default_factory=list)
 
 
 class BankTransaction(BaseModel):

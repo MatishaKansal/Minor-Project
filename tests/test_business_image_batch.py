@@ -60,9 +60,9 @@ def main() -> int:
             .execute()
             .data
         )
-        evidence_rows = (
-            client.table("financial_evidence")
-            .select("evidence_id,file_id")
+        invoice_rows = (
+            client.table("invoice")
+            .select("invoice_id,file_id")
             .in_("file_id", [result.database_file_id for result in successful])
             .execute()
             .data
@@ -70,19 +70,19 @@ def main() -> int:
         source_ids = {result.database_file_id for result in successful}
         resolved_business_ids = {row["business_id"] for row in source_rows}
         source_row_ids = {row["file_id"] for row in source_rows}
-        evidence_file_ids = {row["file_id"] for row in evidence_rows}
+        invoice_file_ids = {row["file_id"] for row in invoice_rows}
         if len(successful) != len(image_paths):
             raise RuntimeError("one or more images failed to persist")
         if len(source_rows) < len(image_paths) or not source_ids.issubset(source_row_ids):
             raise RuntimeError("database does not contain the returned source_file row for every processed image")
-        if len(evidence_rows) < len(successful) or not source_ids.issubset(evidence_file_ids):
-            raise RuntimeError("database does not contain one financial_evidence row per processed image")
+        if len(invoice_rows) < len(successful) or not source_ids.issubset(invoice_file_ids):
+            raise RuntimeError("database does not contain one invoice row per processed image")
         if len(source_ids) != len(successful) or len({result.database_evidence_id for result in successful}) != len(successful):
             raise RuntimeError("database IDs were reused within the batch")
-        if resolved_business_ids != {business_id} or any(row["file_id"] not in source_ids for row in evidence_rows):
+        if resolved_business_ids != {business_id} or any(row["file_id"] not in source_ids for row in invoice_rows):
             raise RuntimeError("batch records do not belong to one resolved business")
 
-        print("Database verification: one source_file and financial_evidence record per image")
+        print("Database verification: one source_file and invoice record per image")
         return 0
     except Exception as exc:
         print(f"Error: {exc}")

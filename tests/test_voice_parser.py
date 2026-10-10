@@ -6,6 +6,7 @@ import pytest
 from backend.parsers.voice_parser import (
     MockSTTEngine,
     SpeechRecognitionEngine,
+    _FlacEncodedAudioData,
     parse_voice_bytes,
     parse_voice_file,
 )
@@ -150,3 +151,34 @@ def test_speech_recognition_engine_handles_valid_wav_structure(tmp_path: Path):
         # A silent wav won't have recognized words, expecting ValueError / UnknownValueError / RequestError
         engine.transcribe(wav_path)
     assert any(term in str(exc_info.value).lower() for term in ["unintelligible", "service", "failed", "speech"])
+
+
+def test_audio_data_encodes_flac_without_external_converter(tmp_path: Path):
+    wav_path = tmp_path / "test_pcm.wav"
+    _create_dummy_wav(wav_path)
+
+    import speech_recognition as sr
+
+    with sr.AudioFile(str(wav_path)) as source:
+        audio = sr.Recognizer().record(source)
+    encoded_audio = _FlacEncodedAudioData(audio.frame_data, audio.sample_rate, audio.sample_width)
+
+    flac_bytes = encoded_audio.get_flac_data(convert_rate=16000, convert_width=2)
+
+    assert flac_bytes.startswith(b"fLaC")
+
+
+def test_speech_engine_transcribes_with_python_flac_encoder(tmp_path: Path, monkeypatch):
+    wav_path = tmp_path / "test_pcm.wav"
+    _create_dummy_wav(wav_path)
+    engine = SpeechRecognitionEngine()
+
+    def recognize(audio_data, language, show_all):
+        assert audio_data.get_flac_data(convert_rate=16000, convert_width=2).startswith(b"fLaC")
+        return {"alternative": [{"transcript": "invoice payment", "confidence": 0.9}]}
+
+    monkeypatch.setattr(engine.recognizer, "recognize_google", recognize)
+    result = engine.transcribe(wav_path)
+
+    assert result.text == "invoice payment"
+    assert result.confidence_score == 90.0

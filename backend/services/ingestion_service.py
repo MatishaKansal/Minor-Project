@@ -13,6 +13,10 @@ from backend.parsers.image_parser import (
     SUPPORTED_EXTENSIONS as IMAGE_EXTENSIONS,
     parse_image,
 )
+from backend.parsers.excel_parser import (
+    SUPPORTED_EXTENSIONS as EXCEL_EXTENSIONS,
+    parse_excel_file,
+)
 from backend.parsers.pdf_parser import (
     SUPPORTED_EXTENSIONS as PDF_EXTENSIONS,
     parse_pdf,
@@ -30,13 +34,13 @@ from backend.schemas.evidence import Evidence
 LOGGER = logging.getLogger(__name__)
 
 ALL_SUPPORTED_EXTENSIONS = (
-    IMAGE_EXTENSIONS | PDF_EXTENSIONS | TEXT_EXTENSIONS | CSV_EXTENSIONS | VOICE_EXTENSIONS
+    IMAGE_EXTENSIONS | PDF_EXTENSIONS | TEXT_EXTENSIONS | CSV_EXTENSIONS | EXCEL_EXTENSIONS | VOICE_EXTENSIONS
 )
 
 
 def detect_file_type(
     file_path: str | os.PathLike[str],
-) -> Literal["image", "pdf", "text", "bank_csv", "voice", "unsupported"]:
+) -> Literal["image", "pdf", "text", "bank_csv", "excel", "voice", "unsupported"]:
     """Detect whether a file is a supported image, PDF, text, bank CSV, voice, or unsupported."""
     path = Path(file_path)
     suffix = path.suffix.lower()
@@ -48,6 +52,8 @@ def detect_file_type(
         return "text"
     if suffix in CSV_EXTENSIONS:
         return "bank_csv"
+    if suffix in EXCEL_EXTENSIONS:
+        return "excel"
     if suffix in VOICE_EXTENSIONS:
         return "voice"
     return "unsupported"
@@ -114,6 +120,16 @@ def ingest_file(
     if doc_type == "bank_csv":
         effective_type = file_type or "bank_statement"
         return parse_bank_csv_file(
+            file_path=path,
+            language=language,
+            business_id=business_id,
+            persist_to_database=persist_to_database,
+            file_type=effective_type,
+        )
+
+    if doc_type == "excel":
+        effective_type = file_type or "invoice"
+        return parse_excel_file(
             file_path=path,
             language=language,
             business_id=business_id,

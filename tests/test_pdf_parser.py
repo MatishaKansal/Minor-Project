@@ -1,6 +1,6 @@
 import fitz
 
-from backend.parsers.pdf_parser import parse_pdf
+from backend.parsers.pdf_parser import extract_pdf_pages, parse_pdf
 from backend.schemas.evidence import Evidence, EvidenceProvenance
 
 
@@ -127,3 +127,63 @@ def test_pdf_result_is_compatible_with_evidence_schema(tmp_path):
     round_trip = Evidence.model_validate(result.model_dump())
 
     assert round_trip == result
+
+
+def test_gstin_extraction_accepts_spaced_registration_labels(tmp_path):
+    path = tmp_path / "spaced-gstin.pdf"
+    write_pdf(path, [
+        "Supplier GST Registration No: 09 AADCR 5842 H 1Z6\n"
+        "Bill To GSTIN: 09 AACCM 4684 P 1ZP\nTOTAL: INR 100.00"
+    ])
+
+    result = parse_pdf(path, file_type="receipt")
+
+    assert result.seller_gstin == "09AADCR5842H1Z6"
+    assert result.buyer_gstin == "09AACCM4684P1ZP"
+
+
+def test_native_pdf_text_is_read_in_visual_block_order(tmp_path):
+    path = tmp_path / "visual-order.pdf"
+    document = fitz.open()
+    page = document.new_page()
+    page.insert_text((72, 72), "Vendor: ACME")
+    page.insert_text((300, 100), "Invoice No: INV-ORDER")
+    document.save(path)
+    document.close()
+
+    pages, confidence = extract_pdf_pages(path)
+
+    assert confidence is None
+    assert pages[0][1].splitlines()[:2] == ["Vendor: ACME", "Invoice No: INV-ORDER"]
+
+
+def test_repeated_headers_are_removed_even_with_spacing_and_case_variation(tmp_path):
+    path = tmp_path / "repeated-header.pdf"
+    write_pdf(path, [
+        "ACME   SUPPLIES\nInvoice No: INV-1\nTOTAL: USD 10.00",
+        " acme supplies \nInvoice No: INV-2\nTOTAL: USD 20.00",
+    ])
+
+    pages, _ = extract_pdf_pages(path)
+
+    assert pages[0][1].splitlines() == ["Invoice No: INV-1", "TOTAL: USD 10.00"]
+    assert pages[1][1].splitlines() == ["Invoice No: INV-2", "TOTAL: USD 20.00"]
+
+
+def test_complete_native_invoice_does_not_run_redundant_header_ocr(tmp_path):
+    path = tmp_path / "complete-native.pdf"
+    write_pdf(path, [
+        "Vendor: ACME Supplies\nInvoice No: INV-2026-001\n"
+        "Date: 2026-09-09\nDescription: Office supplies\n"
+        "TOTAL: USD 125.50\nReference: 1234567890"
+    ])
+
+    class FailingOCREngine:
+        def extract(self, image, language="eng"):
+            raise AssertionError("header OCR should not run for complete native text")
+
+    result = parse_pdf(path, ocr_engine=FailingOCREngine())
+
+    assert result.processing_status == "success"
+    assert result.invoice_number == "INV-2026-001"
+    assert result.date == "2026-09-09"

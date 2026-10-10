@@ -348,7 +348,7 @@ def test_default_business_resolution_reuses_sole_business():
 def test_default_business_resolution_creates_only_when_empty():
     client = BusinessResolverClient([])
     assert get_or_create_default_business(client) == "created-business"
-    assert client.inserted == [{"business_name": "My Business", "industry": "Retail", "currency": "INR"}]
+    assert client.inserted == [{"business_name": "My Business", "default_currency": "INR"}]
 
 
 def test_default_business_resolution_rejects_multiple_businesses():
@@ -369,31 +369,64 @@ def test_tesseract_command_comes_from_environment(monkeypatch, tmp_path):
 
 
 class FakeTable:
-    def __init__(self, name, calls):
+    def __init__(self, name, calls, existing=False):
         self.name = name
         self.calls = calls
+        self.existing = existing
+        self.is_select = False
+
+    def select(self, _columns):
+        self.is_select = True
+        return self
+
+    def update(self, row):
+        self.calls.append((self.name, {"update": row}))
+        return self
+
+    def eq(self, _column, _value):
+        return self
+
+    def limit(self, _count):
+        return self
+
+    def order(self, _column, desc=False):
+        return self
 
     def insert(self, row):
         self.calls.append((self.name, row))
         return self
 
     def execute(self):
+        if self.is_select:
+            existing_rows = {
+                "source_file": [{"file_id": "file-1"}],
+                "invoice": [{"invoice_id": "invoice-1"}],
+                "invoice_extraction": [{"extraction_id": "extraction-1"}],
+                "invoice_item": [{"item_id": "item-1"}],
+                "invoice_payment": [],
+                # Simulates the earlier partial run that failed before provenance insert.
+                "invoice_field_provenance": [],
+            }
+            rows = existing_rows.get(self.name, []) if self.existing else []
+            return type("Response", (), {"data": rows})()
         rows = {
+            "business": [{"business_id": "business-1"}],
             "source_file": [{"file_id": "file-1"}],
-            "financial_evidence": [{"evidence_id": "evidence-1"}],
-            "evidence_details": [{}],
-            "provenance": [{}],
+            "invoice": [{"invoice_id": "invoice-1"}],
+            "invoice_extraction": [{"extraction_id": "extraction-1"}],
+            "invoice_field_provenance": [{"provenance_id": "provenance-1"}],
         }
         return type("Response", (), {"data": rows[self.name]})()
 
 
 class FakeSupabaseClient:
-    def __init__(self):
+    def __init__(self, existing=False):
         self.calls = []
+        self.existing = existing
         self.storage = FakeStorage()
 
     def table(self, name):
-        return FakeTable(name, self.calls)
+        return FakeTable(name, self.calls, existing=self.existing)
 
 
 class FakeStorage:
@@ -420,14 +453,41 @@ def test_persists_image_evidence_in_schema_order(tmp_path):
 
     ids = persist_image_evidence(path, evidence, "business-1", client=client)
 
-    assert ids == {"file_id": "file-1", "evidence_id": "evidence-1"}
+    assert ids == {"file_id": "file-1", "invoice_id": "invoice-1", "evidence_id": "invoice-1"}
     assert [name for name, _ in client.calls] == [
         "source_file",
-        "financial_evidence",
-        "evidence_details",
-        "provenance",
+        "invoice",
+        "invoice_extraction",
     ]
-    assert client.calls[1][1]["confidence_score"] == 0.645
+    assert client.calls[2][1]["overall_confidence"] == 64.5
+
+
+def test_persists_seller_identity_to_business_profile(tmp_path):
+    path = tmp_path / "receipt.jpg"
+    path.write_bytes(b"test image")
+    evidence = Evidence(
+        file_name=path.name,
+        extracted_text="Seller GSTIN: 09 AADCR 5842 H 1Z6",
+        processing_status="success",
+        seller_name="RedBull India Pvt. Ltd",
+        seller_gstin="09AADCR5842H1Z6",
+        currency="INR",
+    )
+    client = FakeSupabaseClient()
+
+    persist_image_evidence(path, evidence, "business-1", client=client)
+
+    business_updates = [
+        row["update"] for name, row in client.calls
+        if name == "business" and "update" in row
+    ]
+    assert business_updates == [{
+        "business_name": "RedBull India Pvt. Ltd",
+        "gstin": "09AADCR5842H1Z6",
+        "state_code": "09",
+        "pan": "AADCR5842H",
+        "default_currency": "INR",
+    }]
 
 
 def test_persists_image_evidence_maps_provenance_field_name(tmp_path):
@@ -454,19 +514,43 @@ def test_persists_image_evidence_maps_provenance_field_name(tmp_path):
 
     ids = persist_image_evidence(path, evidence, "business-1", client=client)
 
-    assert ids == {"file_id": "file-1", "evidence_id": "evidence-1"}
-    provenance_calls = [row for name, row in client.calls if name == "provenance"]
+    assert ids == {"file_id": "file-1", "invoice_id": "invoice-1", "evidence_id": "invoice-1"}
+    provenance_calls = [row for name, row in client.calls if name == "invoice_field_provenance"]
     assert len(provenance_calls) == 1
     rows = provenance_calls[0]
     assert len(rows) == 1
     assert rows[0]["field_name"] == "amount"
     assert rows[0]["source_text"] == "TOTAL 10.00"
     assert rows[0]["page_number"] == 1
-    assert rows[0]["extraction_method"] == "regex_total_label"
-    assert rows[0]["confidence_score"] is None
-    assert rows[0]["location"] == {
-        "field_name": "amount",
-        "value": "10.00",
-        "line_number": 1,
-    }
+    assert "extraction_method" not in rows[0]
+    assert rows[0]["confidence"] is None
+    assert rows[0]["location"] == {"line_number": 1, "extraction_method": "regex_total_label"}
 
+
+def test_persistence_retry_reuses_partial_file_and_fills_provenance(tmp_path):
+    path = tmp_path / "receipt.jpg"
+    path.write_bytes(b"test image")
+    evidence = Evidence(
+        file_name=path.name,
+        extracted_text="TOTAL 10.00",
+        processing_status="success",
+        provenance=[EvidenceProvenance(
+            field_name="amount",
+            value="10.00",
+            source_text="TOTAL 10.00",
+            line_number=1,
+            page_number=1,
+            extraction_method="regex_total_label",
+        )],
+    )
+    client = FakeSupabaseClient(existing=True)
+
+    ids = persist_image_evidence(path, evidence, "business-1", client=client)
+
+    assert ids["file_id"] == "file-1"
+    assert ids["invoice_id"] == "invoice-1"
+    assert not any(name == "source_file" and isinstance(row, list) for name, row in client.calls)
+    assert not any(name == "invoice_item" for name, _ in client.calls)
+    provenance_rows = [row for name, row in client.calls if name == "invoice_field_provenance"]
+    assert len(provenance_rows) == 1
+    assert provenance_rows[0][0]["field_name"] == "amount"

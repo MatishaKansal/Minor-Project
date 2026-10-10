@@ -1,0 +1,11 @@
+From: accounts@smallbiz.com
+To: billing@greenlineoffice.com
+Date: September 28, 2026
+Subject: Payment Confirmation - Invoice #8013
+
+Hi Team,
+
+We confirm that payment of ₹3,800.00 against invoice #8013 has been initiated through RTGS. The payment reference is TXN202609280013. Please confirm once the amount is credited.
+
+Thanks,
+Greenlineoffice Finance Department

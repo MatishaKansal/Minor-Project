@@ -4,7 +4,6 @@ import io
 import logging
 import os
 import tempfile
-import wave
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -15,7 +14,7 @@ from backend.schemas.evidence import Evidence, EvidenceProvenance
 from backend.services.financial_field_extractor import extract_financial_fields
 
 LOGGER = logging.getLogger(__name__)
-SUPPORTED_VOICE_EXTENSIONS = {".wav", ".mp3", ".m4a", ".aac", ".ogg", ".flac", ".webm", ".aiff", ".aif"}
+SUPPORTED_VOICE_EXTENSIONS = {".wav", ".mp3", ".ogg", ".flac", ".aiff", ".aif"}
 DEFAULT_LANGUAGE = "en-US"
 
 
@@ -36,29 +35,30 @@ class STTEngine(Protocol):
         ...
 
 
-def _audio_to_wav_stream(audio_path: Path) -> io.BytesIO | Path:
-    """Convert non-WAV compressed audio (e.g. .aac, .m4a, .mp3) to in-memory 16kHz PCM WAV."""
-    if audio_path.suffix.lower() == ".wav":
-        return audio_path
-    try:
-        import av
+class _FlacEncodedAudioData(sr.AudioData):
+    """AudioData that encodes FLAC through libsndfile, avoiding a flac.exe subprocess."""
 
-        container = av.open(str(audio_path))
-        resampler = av.AudioResampler(format="s16", layout="mono", rate=16000)
-        wav_io = io.BytesIO()
-        with wave.open(wav_io, "wb") as wf:
-            wf.setnchannels(1)
-            wf.setsampwidth(2)
-            wf.setframerate(16000)
-            for frame in container.decode(audio=0):
-                frame.pts = None
-                for rf in resampler.resample(frame):
-                    wf.writeframes(rf.to_ndarray().tobytes())
-        wav_io.seek(0)
-        return wav_io
-    except Exception as exc:
-        LOGGER.warning("Audio conversion via av failed for %s: %s; trying direct read", audio_path, exc)
-        return audio_path
+    def get_flac_data(self, convert_rate: int | None = None, convert_width: int | None = None) -> bytes:
+        import soundfile as sf
+
+        wav_bytes = self.get_wav_data(convert_rate=convert_rate, convert_width=convert_width)
+        samples, sample_rate = sf.read(io.BytesIO(wav_bytes), dtype="int16", always_2d=True)
+        encoded = io.BytesIO()
+        sf.write(encoded, samples, sample_rate, format="FLAC", subtype="PCM_16")
+        return encoded.getvalue()
+
+
+def _read_audio_data(audio_path: Path) -> _FlacEncodedAudioData:
+    """Decode supported audio using libsndfile; normalize samples to mono PCM16."""
+    import numpy as np
+    import soundfile as sf
+
+    samples, sample_rate = sf.read(str(audio_path), dtype="int16", always_2d=True)
+    if samples.size == 0:
+        raise ValueError(f"Audio file '{audio_path.name}' contains no audio samples")
+    mono_samples = np.rint(samples.astype(np.int32).mean(axis=1))
+    mono_samples = np.clip(mono_samples, -32768, 32767).astype("<i2")
+    return _FlacEncodedAudioData(mono_samples.tobytes(), int(sample_rate), 2)
 
 
 class SpeechRecognitionEngine:
@@ -72,9 +72,7 @@ class SpeechRecognitionEngine:
             raise FileNotFoundError(f"Audio file does not exist: {audio_path}")
 
         try:
-            audio_source_input = _audio_to_wav_stream(audio_path)
-            with sr.AudioFile(audio_source_input if isinstance(audio_source_input, str) or hasattr(audio_source_input, "read") else str(audio_source_input)) as source:
-                audio_data = self.recognizer.record(source)
+            audio_data = _read_audio_data(audio_path)
 
             # Request detailed response with confidence score if available
             response = self.recognizer.recognize_google(audio_data, language=language, show_all=True)
@@ -99,6 +97,11 @@ class SpeechRecognitionEngine:
             raise ValueError(f"Speech in audio file '{audio_path.name}' was unintelligible") from exc
         except sr.RequestError as exc:
             raise STTUnavailableError(f"Speech recognition service request failed: {exc}") from exc
+        except ImportError as exc:
+            raise STTUnavailableError(
+                "Audio support dependencies are missing. Install them with: "
+                "python -m pip install -r requirements.txt"
+            ) from exc
         except Exception as exc:
             raise ValueError(f"Failed to process audio file '{audio_path.name}': {exc}") from exc
 
@@ -186,6 +189,7 @@ def parse_voice_file(
             evidence = evidence.model_copy(update={
                 "database_file_id": database_ids["file_id"],
                 "database_evidence_id": database_ids["evidence_id"],
+                "database_invoice_id": database_ids.get("invoice_id"),
             })
 
         return evidence
@@ -246,6 +250,7 @@ def parse_voice_bytes(
             evidence = evidence.model_copy(update={
                 "database_file_id": database_ids["file_id"],
                 "database_evidence_id": database_ids["evidence_id"],
+                "database_invoice_id": database_ids.get("invoice_id"),
             })
 
         return evidence

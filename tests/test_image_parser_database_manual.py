@@ -47,7 +47,7 @@ def main() -> int:
         print(f"Status: {result.processing_status}")
         print(f"Database File ID: {result.database_file_id}")
         print(f"Database Evidence ID: {result.database_evidence_id}")
-        if result.processing_status != "success" or not result.database_file_id or not result.database_evidence_id:
+        if result.processing_status != "success" or not result.database_file_id or not (result.database_invoice_id or result.database_evidence_id):
             print("DATABASE INSERT: FAILED")
             print(f"Error: {result.error or 'parser did not return database IDs'}")
             return 1
@@ -59,38 +59,42 @@ def main() -> int:
             .execute()
             .data
         )
-        evidence_rows = (
-            client.table("financial_evidence")
-            .select("evidence_id,file_id")
-            .eq("evidence_id", result.database_evidence_id)
+        invoice_id = result.database_invoice_id or result.database_evidence_id
+        invoice_rows = (
+            client.table("invoice")
+            .select("invoice_id,file_id")
+            .eq("invoice_id", invoice_id)
+            .execute()
+            .data
+        )
+        extraction_rows = (
+            client.table("invoice_extraction")
+            .select("extraction_id,invoice_id,raw_text")
+            .eq("invoice_id", invoice_id)
             .execute()
             .data
         )
         provenance_rows = (
-            client.table("provenance")
-            .select("provenance_id,evidence_id,file_id,field_name,page_number,source_text,extraction_method,confidence_score,location")
-            .eq("evidence_id", result.database_evidence_id)
+            client.table("invoice_field_provenance")
+            .select("provenance_id,invoice_id,extraction_id,field_name,page_number,source_text,confidence,location")
+            .eq("invoice_id", invoice_id)
             .execute()
             .data
         )
-        if not source_rows or not evidence_rows or not provenance_rows:
-            raise RuntimeError("created source_file, financial_evidence, or provenance rows were not found")
+        if not source_rows or not invoice_rows or not extraction_rows or not provenance_rows:
+            raise RuntimeError("created source_file, invoice, extraction, or provenance rows were not found")
         if source_rows[0]["business_id"] != business_id:
             raise RuntimeError("created source file does not belong to the resolved business")
-        if evidence_rows[0]["file_id"] != source_rows[0]["file_id"]:
-            raise RuntimeError("financial evidence is not linked to the created source file")
+        if invoice_rows[0]["file_id"] != source_rows[0]["file_id"]:
+            raise RuntimeError("invoice is not linked to the created source file")
         if any(row.get("field_name") is None for row in provenance_rows):
             raise RuntimeError("one or more newly inserted provenance rows has NULL field_name")
         expected_fields = {"date", "amount", "currency", "party_name"}
         stored_fields = {row["field_name"] for row in provenance_rows}
         if not expected_fields.issubset(stored_fields):
             raise RuntimeError(f"missing expected provenance fields: {expected_fields - stored_fields}")
-        if any(
-            row["evidence_id"] != result.database_evidence_id
-            or row["file_id"] != result.database_file_id
-            for row in provenance_rows
-        ):
-            raise RuntimeError("provenance rows are linked to the wrong evidence or source file")
+        if any(row["invoice_id"] != invoice_id for row in provenance_rows):
+            raise RuntimeError("provenance rows are linked to the wrong invoice")
 
         print("Retrieved provenance rows:")
         for row in provenance_rows:
@@ -100,8 +104,8 @@ def main() -> int:
                     "field_name": row["field_name"],
                     "source_text": row["source_text"],
                     "page_number": row["page_number"],
-                    "extraction_method": row["extraction_method"],
-                    "confidence_score": row["confidence_score"],
+                    "extraction_method": (row.get("location") or {}).get("extraction_method"),
+                    "confidence": row["confidence"],
                     "location": row["location"],
                 }
             )

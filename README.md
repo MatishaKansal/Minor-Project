@@ -14,6 +14,8 @@ pip install -r requirements.txt
 
 Install Tesseract OCR separately on Windows. The commonly used installer is available from the [UB Mannheim Tesseract builds](https://github.com/UB-Mannheim/tesseract/wiki). During installation, include the languages needed by your documents and note the path to `tesseract.exe`.
 
+Audio and Excel dependencies are included in `requirements.txt`. Install them with `pip install -r requirements.txt`. Excel parsing supports `.xlsx` and `.xlsm`; audio parsing supports `.wav`, `.mp3`, `.ogg`, `.flac`, `.aiff`, and `.aif`. Audio decoding and FLAC encoding use the Python `soundfile` package, so no separate `flac.exe` is needed. Voice transcription uses Google's Speech Recognition service and requires an internet connection.
+
 If Tesseract is not on `PATH`, configure it for the current PowerShell session:
 
 ```powershell
@@ -38,7 +40,7 @@ PDFs with selectable text are extracted page by page with PyMuPDF. Scanned or im
 python -c "from backend.parsers.pdf_parser import parse_pdf; print(parse_pdf('data/input/invoice.pdf').model_dump_json(indent=2))"
 ```
 
-PDF results use the same `Evidence` schema as images. Provenance retains the original PDF line, page number, line number, and deterministic extraction method. PDFs can be persisted with `persist_to_database=True`; the existing Supabase tables and automatic business resolution are reused.
+PDF results use the same `Evidence` schema as images. Provenance retains the original PDF line, page number, line number, and deterministic extraction method. PDFs can be persisted with `persist_to_database=True`; invoice rows are written to the invoice schema and business resolution is reused.
 
 Example output:
 
@@ -83,7 +85,18 @@ The default parser only returns OCR output. To persist an image, run this comman
 python -c "from backend.parsers.image_parser import parse_image; print(parse_image('data/input/images/test.jpg', persist_to_database=True, file_type='receipt').model_dump_json(indent=2))"
 ```
 
-This uploads the image to the configured Supabase Storage bucket, then inserts rows into `source_file`, `financial_evidence`, `evidence_details`, and `provenance`. The raw OCR text is stored in `evidence_details.details` and `provenance.source_text`. Server-side writes use `SUPABASE_SERVICE_ROLE_KEY`; never expose that key to browser code.
+This uploads the image to the configured Supabase Storage bucket, then inserts rows into `source_file`, `invoice`, and `invoice_extraction`; extracted line items and field source data are written to `invoice_item` and `invoice_field_provenance` when available. Raw OCR text is stored in `invoice_extraction.raw_text`. Server-side writes use `SUPABASE_SERVICE_ROLE_KEY`; never expose that key to browser code.
+
+Image, PDF, text, and voice parsers share this invoice persistence path. Bank CSV parsing remains available, but database persistence is intentionally rejected because the invoice-only schema has no bank statement or transaction tables.
+
+Excel workbooks (`.xlsx` and `.xlsm`) are supported. Invoice-style workbooks
+are parsed from their tabular headers and rows; workbooks with bank
+transaction headers are routed through the bank-statement parser.
+
+When persisted evidence contains seller identity, the active `business` row is
+also synchronized with the seller name, GSTIN, PAN, state code, address, and
+currency fields that were extracted. GSTIN values are normalized to the
+canonical 15-character format, including values separated by OCR whitespace.
 
 Configure `SUPABASE_STORAGE_BUCKET` with an existing bucket name. If it is omitted, the repository uses the only existing bucket; it refuses to guess when there are zero or multiple buckets.
 
@@ -101,11 +114,11 @@ For a manual verification that queries the inserted rows:
 python tests/test_image_parser_database_manual.py
 ```
 
-The manual check does not delete, update, truncate, or drop records. It creates new evidence rows and verifies `source_file`, `financial_evidence`, and `provenance` by their returned IDs.
+The manual check does not delete, update, truncate, or drop records. It creates new invoice rows and verifies the source file, invoice, extraction, and field provenance by their returned IDs.
 
 ### Business Image Batch
 
-All uploaded documents for one audit business automatically use the same resolved business. Each image still receives a new `source_file.file_id` and `financial_evidence.evidence_id`:
+All uploaded invoice documents for one business automatically use the same resolved business. Each image receives a new `source_file.file_id` and `invoice.invoice_id`:
 
 ```powershell
 python tests/test_business_image_batch.py

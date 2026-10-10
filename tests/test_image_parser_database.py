@@ -33,35 +33,43 @@ def test_image_parser_persists_and_verifies_supabase_records():
 
     assert result.processing_status == "success"
     assert result.database_file_id
-    assert result.database_evidence_id
+    assert result.database_invoice_id or result.database_evidence_id
 
     source_rows = (
         client.table("source_file")
-        .select("file_id,business_id,file_name,file_type")
+        .select("file_id,business_id,file_name")
         .eq("file_id", result.database_file_id)
         .execute()
         .data
     )
-    evidence_rows = (
-        client.table("financial_evidence")
-        .select("evidence_id,file_id,amount,currency,party_name")
-        .eq("evidence_id", result.database_evidence_id)
+    invoice_id = result.database_invoice_id or result.database_evidence_id
+    invoice_rows = (
+        client.table("invoice")
+        .select("invoice_id,file_id,invoice_total,currency,seller_name")
+        .eq("invoice_id", invoice_id)
+        .execute()
+        .data
+    )
+    extraction_rows = (
+        client.table("invoice_extraction")
+        .select("extraction_id,invoice_id,raw_text")
+        .eq("invoice_id", invoice_id)
         .execute()
         .data
     )
     provenance_rows = (
-        client.table("provenance")
-        .select("evidence_id,file_id,field_name,source_text,page_number,extraction_method,location")
-        .eq("evidence_id", result.database_evidence_id)
+        client.table("invoice_field_provenance")
+        .select("invoice_id,field_name,field_value,source_text,page_number,location")
+        .eq("invoice_id", invoice_id)
         .execute()
         .data
     )
 
     assert source_rows
     assert source_rows[0]["file_name"] == IMAGE_PATH.name
-    assert source_rows[0]["file_type"] == "receipt"
-    assert evidence_rows and evidence_rows[0]["file_id"] == result.database_file_id
-    assert evidence_rows[0]["file_id"] == source_rows[0]["file_id"]
+    assert invoice_rows and invoice_rows[0]["file_id"] == result.database_file_id
+    assert invoice_rows[0]["file_id"] == source_rows[0]["file_id"]
+    assert extraction_rows and extraction_rows[0]["invoice_id"] == invoice_id
     assert provenance_rows
     assert all(row["field_name"] is not None for row in provenance_rows)
-    assert any(row["field_name"] == "amount" for row in provenance_rows)
+    assert any(row["field_name"] in {"amount", "invoice_total"} for row in provenance_rows)

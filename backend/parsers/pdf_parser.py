@@ -21,6 +21,39 @@ DEFAULT_LANGUAGE = "eng"
 _HEADER_FOOTER_MAX_RATIO = 0.6
 # A line must appear on at least this many pages to be considered a repeated header/footer.
 _REPEAT_THRESHOLD = 2
+_MIN_NATIVE_TEXT_CHARS = 5
+
+
+def _normalise_repeated_line(line: str) -> str:
+    """Create a stable key for repeated headers/footers despite PDF spacing noise."""
+    return " ".join(line.split()).casefold()
+
+
+def _extract_native_page_text(page: fitz.Page) -> str:
+    """Extract text in visual order, falling back to PyMuPDF's plain text mode."""
+    try:
+        blocks = page.get_text("blocks")
+    except (AttributeError, RuntimeError, TypeError):
+        blocks = []
+
+    text_blocks: list[tuple[float, float, str]] = []
+    for block in blocks:
+        if not isinstance(block, (tuple, list)) or len(block) < 5:
+            continue
+        block_text = block[4]
+        if not isinstance(block_text, str) or not block_text.strip():
+            continue
+        x0, y0 = block[0], block[1]
+        if not isinstance(x0, (int, float)) or not isinstance(y0, (int, float)):
+            continue
+        text_blocks.append((float(y0), float(x0), block_text.strip()))
+
+    if text_blocks:
+        text_blocks.sort(key=lambda item: (item[0], item[1]))
+        return _normalize_text("\n".join(text for _, _, text in text_blocks).strip())
+
+    raw_text = page.get_text("text")
+    return _normalize_text(raw_text.strip() if isinstance(raw_text, str) else "")
 
 
 def validate_pdf_path(file_path: str | os.PathLike[str]) -> Path:
@@ -41,25 +74,44 @@ def _strip_repeated_headers_footers(pages: list[tuple[int, str]]) -> list[tuple[
     if len(pages) < _REPEAT_THRESHOLD:
         return pages
 
-    # Build a frequency map: stripped line → set of page numbers it appears on
+    # Build a frequency map: normalised line → set of page numbers it appears on.
     line_pages: dict[str, set[int]] = {}
     for pno, text in pages:
         seen_on_this_page: set[str] = set()
-        for raw in text.splitlines():
+        nonempty = [raw for raw in text.splitlines() if raw.strip()]
+        edge_lines = set(nonempty[:5] + nonempty[-5:])
+        longest_line = max((len(raw.strip()) for raw in nonempty), default=0)
+        for raw in edge_lines:
             stripped = raw.strip()
-            if stripped and stripped not in seen_on_this_page:
-                line_pages.setdefault(stripped, set()).add(pno)
-                seen_on_this_page.add(stripped)
+            key = _normalise_repeated_line(stripped)
+            if (
+                key
+                and key not in seen_on_this_page
+                and (
+                    len(nonempty) <= 5
+                    or len(stripped) <= longest_line * _HEADER_FOOTER_MAX_RATIO
+                )
+            ):
+                line_pages.setdefault(key, set()).add(pno)
+                seen_on_this_page.add(key)
 
-    repeated = {line for line, page_set in line_pages.items() if len(page_set) >= _REPEAT_THRESHOLD}
+    repeated = {key for key, page_set in line_pages.items() if len(page_set) >= _REPEAT_THRESHOLD}
     if not repeated:
         return pages
 
     cleaned: list[tuple[int, str]] = []
     for pno, text in pages:
+        nonempty = [raw for raw in text.splitlines() if raw.strip()]
+        edge_lines = {
+            _normalise_repeated_line(raw.strip())
+            for raw in nonempty[:5] + nonempty[-5:]
+        }
         kept_lines = [
             raw for raw in text.splitlines()
-            if raw.strip() not in repeated
+            if (
+                _normalise_repeated_line(raw.strip()) not in repeated
+                or _normalise_repeated_line(raw.strip()) not in edge_lines
+            )
         ]
         cleaned.append((pno, "\n".join(kept_lines)))
 
@@ -78,6 +130,22 @@ def _try_decrypt(document: fitz.Document) -> None:
             )
 
 
+def _ocr_first_pdf_page(
+    file_path: Path,
+    language: str,
+    ocr_engine: OCREngine | None,
+) -> tuple[str, float | None]:
+    """OCR page one when PDF text extraction loses invoice header values."""
+    with fitz.open(file_path) as document:
+        _try_decrypt(document)
+        page = document.load_page(0)
+        pixmap = page.get_pixmap(dpi=300)
+        with Image.open(io.BytesIO(pixmap.tobytes("png"))) as page_image:
+            prepared = preprocess_image(page_image.convert("RGB"))
+        result = extract_text_with_ocr(prepared, language=language, engine=ocr_engine)
+    return _normalize_text(result.text.strip()), result.confidence_score
+
+
 def extract_pdf_pages(
     file_path: str | os.PathLike[str],
     language: str = DEFAULT_LANGUAGE,
@@ -90,7 +158,7 @@ def extract_pdf_pages(
     - Permissions-only encryption → authenticates with empty password
     - Password-protected PDFs → raises clear ValueError
     - Image-only pages (no native text) → renders at 300 DPI and runs OCR
-    - Pages with very sparse text (<20 chars) → treated as image-only, OCR fallback
+    - Pages with very sparse text (<5 chars) → treated as image-only, OCR fallback
     - Repeated headers/footers → stripped from multi-page documents
     - BOM, null bytes, non-breaking spaces → normalised via _normalize_text
     """
@@ -107,12 +175,10 @@ def extract_pdf_pages(
 
             for page_number in range(1, document.page_count + 1):
                 page = document.load_page(page_number - 1)
-                page_text = _normalize_text(page.get_text("text").strip())
+                page_text = _extract_native_page_text(page)
 
-                # Treat pages with no native text as image-only (< 5 chars triggers OCR)
-                # Using 5 (not 0) so pages containing only a tiny watermark/footer don't
-                # get wrongly classified as empty — but genuinely image-only pages do.
-                if len(page_text) < 5:
+                # A tiny text layer is commonly just a watermark or page number.
+                if len(page_text.strip()) < _MIN_NATIVE_TEXT_CHARS:
                     LOGGER.info(
                         "No native text on page %d of %s; falling back to OCR",
                         page_number, path.name,
@@ -158,6 +224,58 @@ def parse_pdf(
         pages, confidence_score = extract_pdf_pages(path, language=language, ocr_engine=ocr_engine)
         extracted_text = "\n\n".join(text.rstrip("\n") for _, text in pages if text.strip())
         financial_fields = extract_financial_fields(pages)
+        # Invoice PDFs often contain selectable text but have a broken reading
+        # order that drops the invoice number and issue date. OCR only the first
+        # page in that case and merge its header fields with the cleaner native
+        # tax/item values from the PDF text layer.
+        if (
+            file_type in {"invoice", "tax_invoice", "credit_note", "debit_note"}
+            and (
+                not financial_fields.get("invoice_number")
+                or not financial_fields.get("invoice_date")
+                or len(pages[0][1]) < 80
+            )
+        ):
+            # Native text layers can produce plausible but wrong values (for
+            # example a vehicle number after the detached "Invoice No:" label).
+            # OCR the first page and prefer its explicitly labeled header values.
+            try:
+                ocr_text, ocr_confidence = _ocr_first_pdf_page(path, language, ocr_engine)
+                ocr_fields = extract_financial_fields([(1, ocr_text)])
+            except (OSError, RuntimeError, ValueError) as exc:
+                LOGGER.warning(
+                    "Header OCR failed for %s; retaining native PDF extraction: %s",
+                    path,
+                    exc,
+                )
+            else:
+                ocr_field_names = {"invoice_number", "invoice_date", "date", "place_of_supply", "buyer_name"}
+                for field_name in ocr_field_names:
+                    if ocr_fields.get(field_name):
+                        financial_fields[field_name] = ocr_fields[field_name]
+                # Keep generic date in sync with the selected invoice date.
+                if financial_fields.get("invoice_date"):
+                    financial_fields["date"] = financial_fields["invoice_date"]
+                ocr_provenance = [
+                    {**item, "confidence": ocr_confidence}
+                    for item in ocr_fields.get("provenance", [])
+                    if item.get("field_name") in ocr_field_names
+                ]
+                retained_provenance = [
+                    item for item in financial_fields.get("provenance", [])
+                    if item.get("field_name") not in ocr_field_names
+                ]
+                financial_fields["provenance"] = retained_provenance + ocr_provenance
+                if ocr_confidence is not None:
+                    confidence_values = [
+                        value for value in (confidence_score, ocr_confidence)
+                        if value is not None
+                    ]
+                    confidence_score = round(
+                        sum(confidence_values) / len(confidence_values), 2
+                    )
+                if ocr_text.strip() and ocr_text.strip() not in extracted_text:
+                    extracted_text = f"{ocr_text}\n\n{extracted_text}"
         provenance = financial_fields.pop("provenance", [])
 
         evidence = Evidence(
@@ -166,6 +284,7 @@ def parse_pdf(
             extracted_text=extracted_text,
             language=language,
             confidence_score=confidence_score,
+            page_count=len(pages),
             processing_status="success",
             provenance=[EvidenceProvenance.model_validate(item) for item in provenance],
             **financial_fields,
@@ -178,6 +297,7 @@ def parse_pdf(
             evidence = evidence.model_copy(update={
                 "database_file_id": database_ids["file_id"],
                 "database_evidence_id": database_ids["evidence_id"],
+                "database_invoice_id": database_ids.get("invoice_id"),
             })
 
         return evidence

@@ -11,7 +11,6 @@ from typing import Any
 from uuid import uuid4
 
 from dotenv import load_dotenv
-from postgrest.exceptions import APIError
 from supabase import Client, create_client
 
 LOGGER = logging.getLogger(__name__)
@@ -62,13 +61,55 @@ def get_or_create_default_business(client: Client | None = None) -> str:
         )
 
     created = supabase.table("business").insert(
-        {"business_name": "My Business", "industry": "Retail", "currency": "INR"}
+        {"business_name": "My Business", "default_currency": "INR"}
     ).execute()
     if not created.data or not created.data[0].get("business_id"):
         raise BusinessContextError("Could not create the default business in Supabase")
     business_id = created.data[0]["business_id"]
     LOGGER.info("Created and resolved default business: %s", business_id)
     return business_id
+
+
+def _normalise_gstin(value: str | None) -> str | None:
+    """Return a compact GSTIN only when it has the expected 15-character shape."""
+    if not value:
+        return None
+    compact = re.sub(r"[^0-9A-Z]", "", value.upper())
+    if re.fullmatch(r"\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]", compact):
+        return compact
+    return None
+
+
+def _sync_business_profile(supabase: Client, business_id: str, evidence: Any) -> None:
+    """Fill missing business identity fields from the document's seller details."""
+    seller_gstin = _normalise_gstin(getattr(evidence, "seller_gstin", None))
+    seller_name = getattr(evidence, "seller_name", None) or getattr(evidence, "party_name", None)
+    seller_pan = getattr(evidence, "seller_pan", None)
+    seller_address = getattr(evidence, "seller_address", None)
+    currency = getattr(evidence, "currency", None)
+
+    profile: dict[str, Any] = {}
+    if seller_name:
+        profile["business_name"] = str(seller_name).strip()
+    if seller_gstin:
+        profile["gstin"] = seller_gstin
+        profile["state_code"] = seller_gstin[:2]
+        seller_pan = seller_pan or seller_gstin[2:12]
+    if seller_pan:
+        profile["pan"] = str(seller_pan).strip().upper()
+    if isinstance(seller_address, dict) and seller_address:
+        profile["address"] = seller_address
+    if currency:
+        profile["default_currency"] = str(currency).strip().upper()
+
+    if not profile:
+        LOGGER.info("No seller identity fields available to update business %s", business_id)
+        return
+
+    # Update only fields present in the parsed evidence. Database errors are
+    # intentionally allowed to propagate so ingestion cannot report false success.
+    supabase.table("business").update(profile).eq("business_id", business_id).execute()
+    LOGGER.info("Synchronized business profile fields for %s: %s", business_id, sorted(profile))
 
 
 def get_storage_bucket(client: Client) -> str:
@@ -105,7 +146,7 @@ def _file_hash(path: Path) -> str:
 def _database_confidence(confidence_score: float | None) -> float | None:
     if confidence_score is None:
         return None
-    return round(max(0.0, min(100.0, confidence_score)) / 100, 4)
+    return round(max(0.0, min(100.0, confidence_score)), 2)
 
 
 def _database_date(value: str | None) -> str | None:
@@ -148,61 +189,141 @@ def _database_date(value: str | None) -> str | None:
     return None
 
 
-def _insert_evidence_records(
+def _insert_invoice_records(
     supabase: Client,
     file_id: str,
     business_id: str,
     evidence: Any,
 ) -> dict[str, str]:
-    confidence = _database_confidence(evidence.confidence_score)
-    financial_row = {
-        "file_id": file_id,
+    """Insert invoice header, extraction run, item rows, and field provenance."""
+    invoice_date = _database_date(getattr(evidence, "invoice_date", None) or evidence.date)
+    invoice_total = getattr(evidence, "invoice_total", None) or evidence.amount
+    invoice_row = {
         "business_id": business_id,
-        "confidence_score": confidence,
-        "date": _database_date(evidence.date),
-        "amount": evidence.amount,
-        "currency": evidence.currency,
-        "party_name": evidence.party_name,
-        "reference_number": evidence.invoice_number,
-        "description": evidence.description,
+        "file_id": file_id,
+        "invoice_number": evidence.invoice_number,
+        "invoice_date": invoice_date,
+        "due_date": _database_date(getattr(evidence, "due_date", None)),
+        "invoice_type": getattr(evidence, "invoice_type", None),
+        "seller_name": getattr(evidence, "seller_name", None) or evidence.party_name,
+        "seller_gstin": getattr(evidence, "seller_gstin", None),
+        "seller_pan": getattr(evidence, "seller_pan", None),
+        "seller_address": getattr(evidence, "seller_address", None),
+        "buyer_name": getattr(evidence, "buyer_name", None),
+        "buyer_gstin": getattr(evidence, "buyer_gstin", None),
+        "buyer_pan": getattr(evidence, "buyer_pan", None),
+        "buyer_address": getattr(evidence, "buyer_address", None),
+        "place_of_supply": getattr(evidence, "place_of_supply", None),
+        "reverse_charge": getattr(evidence, "reverse_charge", None),
+        "subtotal": getattr(evidence, "subtotal", None),
+        "discount_amount": getattr(evidence, "discount_amount", None),
+        "cgst_total": getattr(evidence, "cgst_total", None),
+        "sgst_total": getattr(evidence, "sgst_total", None),
+        "igst_total": getattr(evidence, "igst_total", None),
+        "cess_total": getattr(evidence, "cess_total", None),
+        "round_off": getattr(evidence, "round_off", None),
+        "invoice_total": invoice_total,
+        "currency": getattr(evidence, "currency", None) or "INR",
+        "payment_terms": getattr(evidence, "payment_terms", None),
+        "notes": getattr(evidence, "notes", None),
     }
-    try:
-        financial_response = supabase.table("financial_evidence").insert(financial_row).execute()
-    except APIError as exc:
-        error_payload = exc.args[0] if exc.args else {}
-        error_text = str(error_payload)
-        missing_business_column = (
-            (isinstance(error_payload, dict) and error_payload.get("code") == "PGRST204")
-            or "PGRST204" in error_text
-        ) and "business_id" in error_text and "financial_evidence" in error_text
-        if not missing_business_column:
-            raise
-        LOGGER.warning(
-            "Deployed financial_evidence table has no business_id column; "
-            "using source_file.business_id as the ownership link."
-        )
-        financial_row.pop("business_id")
-        financial_response = supabase.table("financial_evidence").insert(financial_row).execute()
-    if not financial_response.data:
-        raise RuntimeError("Supabase did not return the inserted financial_evidence row")
-    evidence_id = financial_response.data[0]["evidence_id"]
+    existing_invoices = (
+        supabase.table("invoice")
+        .select("invoice_id")
+        .eq("file_id", file_id)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if existing_invoices:
+        invoice_id = existing_invoices[0]["invoice_id"]
+        supabase.table("invoice").update(invoice_row).eq("invoice_id", invoice_id).execute()
+    else:
+        invoice_response = supabase.table("invoice").insert(invoice_row).execute()
+        if not invoice_response.data:
+            raise RuntimeError("Supabase did not return the inserted invoice row")
+        invoice_id = invoice_response.data[0]["invoice_id"]
 
-    details = {
-        "source_type": evidence.source_type,
-        "language": evidence.language,
-        "extracted_text": evidence.extracted_text,
-        "processing_status": evidence.processing_status,
-        "error": evidence.error,
+    extraction_method = getattr(evidence, "source_type", "unknown")
+    extraction_row = {
+        "invoice_id": invoice_id,
+        "extraction_status": getattr(evidence, "processing_status", "success"),
+        "extraction_method": extraction_method,
+        "overall_confidence": _database_confidence(getattr(evidence, "confidence_score", None)),
+        "raw_text": getattr(evidence, "extracted_text", ""),
+        "error_message": getattr(evidence, "error", None),
     }
-    if hasattr(evidence, "summary") and evidence.summary:
-        details["summary"] = evidence.summary.model_dump() if hasattr(evidence.summary, "model_dump") else evidence.summary
-    if hasattr(evidence, "transactions") and evidence.transactions:
-        details["transactions"] = [
-            t.model_dump() if hasattr(t, "model_dump") else t for t in evidence.transactions
-        ]
-    supabase.table("evidence_details").insert(
-        {"evidence_id": evidence_id, "details": details}
-    ).execute()
+    existing_extractions = (
+        supabase.table("invoice_extraction")
+        .select("extraction_id")
+        .eq("invoice_id", invoice_id)
+        .order("processed_at", desc=True)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if existing_extractions:
+        extraction_id = existing_extractions[0]["extraction_id"]
+        supabase.table("invoice_extraction").update(extraction_row).eq(
+            "extraction_id", extraction_id
+        ).execute()
+    else:
+        extraction_response = supabase.table("invoice_extraction").insert(extraction_row).execute()
+        extraction_id = extraction_response.data[0]["extraction_id"] if extraction_response.data else None
+
+    item_rows = []
+    for index, item in enumerate(getattr(evidence, "items", []) or [], start=1):
+        item_data = item.model_dump(exclude_none=True) if hasattr(item, "model_dump") else dict(item)
+        allowed = {
+            key: item_data[key]
+            for key in (
+                "description", "hsn_sac_code", "quantity", "unit", "unit_price",
+                "discount_amount", "taxable_value", "gst_rate", "cgst_amount",
+                "sgst_amount", "igst_amount", "cess_amount", "line_total",
+            )
+            if key in item_data
+        }
+        item_rows.append({
+            "invoice_id": invoice_id,
+            "line_number": item_data.get("line_number") or index,
+            **allowed,
+        })
+    existing_items = (
+        supabase.table("invoice_item")
+        .select("item_id")
+        .eq("invoice_id", invoice_id)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if item_rows and not existing_items:
+        supabase.table("invoice_item").insert(item_rows).execute()
+
+    payment_rows = []
+    for payment in getattr(evidence, "payments", []) or []:
+        payment_data = payment.model_dump(exclude_none=True) if hasattr(payment, "model_dump") else dict(payment)
+        payment_rows.append({
+            "invoice_id": invoice_id,
+            "payment_date": _database_date(payment_data.get("payment_date")),
+            "amount": payment_data.get("amount"),
+            "payment_mode": payment_data.get("payment_mode"),
+            "reference_number": payment_data.get("reference_number"),
+        })
+    existing_payments = (
+        supabase.table("invoice_payment")
+        .select("payment_id")
+        .eq("invoice_id", invoice_id)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if payment_rows and not existing_payments:
+        supabase.table("invoice_payment").insert(payment_rows).execute()
+
     provenance_rows = []
     for item in evidence.provenance:
         if isinstance(item, dict):
@@ -222,36 +343,33 @@ def _insert_evidence_records(
             extraction_method = getattr(item, "extraction_method", "OCR")
             confidence_score = getattr(item, "confidence", None)
 
-        provenance_rows.append(
-            {
-                "evidence_id": evidence_id,
-                "file_id": file_id,
+        if field_name:
+            provenance_rows.append({
+                "invoice_id": invoice_id,
+                "extraction_id": extraction_id,
                 "field_name": field_name,
-                "page_number": page_number,
+                "field_value": str(value) if value is not None else None,
+                "page_number": page_number or 1,
                 "source_text": source_text,
-                "location": {
-                    "field_name": field_name,
-                    "value": value,
-                    "line_number": line_number,
-                },
-                "extraction_method": extraction_method,
-                "confidence_score": _database_confidence(confidence_score),
-            }
-        )
-    if not provenance_rows:
-        provenance_rows = [
-            {
-                "evidence_id": evidence_id,
-                "file_id": file_id,
-                "page_number": getattr(evidence, "page_number", 1),
-                "source_text": getattr(evidence, "extracted_text", ""),
-                "extraction_method": "TEXT" if evidence.source_type in {"text", "txt"} else ("PDF_TEXT" if evidence.source_type == "pdf" else "OCR"),
-                "confidence_score": confidence,
-            }
-        ]
-    supabase.table("provenance").insert(provenance_rows).execute()
-    LOGGER.info("Persisted evidence: file_id=%s evidence_id=%s", file_id, evidence_id)
-    return {"file_id": file_id, "evidence_id": evidence_id}
+                # The current invoice_field_provenance table stores the method
+                # inside its JSON location column; it has no top-level
+                # extraction_method column.
+                "location": {"line_number": line_number, "extraction_method": extraction_method},
+                "confidence": _database_confidence(confidence_score),
+            })
+    existing_provenance = (
+        supabase.table("invoice_field_provenance")
+        .select("provenance_id")
+        .eq("invoice_id", invoice_id)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if provenance_rows and not existing_provenance:
+        supabase.table("invoice_field_provenance").insert(provenance_rows).execute()
+    LOGGER.info("Persisted invoice: file_id=%s invoice_id=%s", file_id, invoice_id)
+    return {"file_id": file_id, "invoice_id": invoice_id, "evidence_id": invoice_id}
 
 
 def persist_evidence(
@@ -268,7 +386,24 @@ def persist_evidence(
         raise FileNotFoundError(f"Document file does not exist: {path}")
     supabase = client or get_supabase_client()
     business_id = business_id.strip() if business_id else get_or_create_default_business(supabase)
+    _sync_business_profile(supabase, business_id, evidence)
     bucket = get_storage_bucket(supabase)
+    file_hash = _file_hash(path)
+    existing_files = (
+        supabase.table("source_file")
+        .select("file_id")
+        .eq("business_id", business_id)
+        .eq("file_hash", file_hash)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if existing_files:
+        file_id = existing_files[0]["file_id"]
+        LOGGER.info("Reusing existing source_file for identical content: file_id=%s", file_id)
+        return _insert_invoice_records(supabase, file_id, business_id, evidence)
+
     object_path = f"{business_id}/{uuid4()}-{path.name}"
     with path.open("rb") as source_file:
         supabase.storage.from_(bucket).upload(
@@ -279,10 +414,10 @@ def persist_evidence(
     source_row = {
         "business_id": business_id,
         "file_name": path.name,
-        "file_type": file_type,
         "mime_type": mimetypes.guess_type(path.name)[0],
         "storage_path": storage_path or f"{bucket}/{object_path}",
-        "file_hash": _file_hash(path),
+        "file_hash": file_hash,
+        "page_count": getattr(evidence, "page_count", None),
         "processing_status": "processed" if evidence.processing_status == "success" else "failed",
     }
     source_response = supabase.table("source_file").insert(source_row).execute()
@@ -290,7 +425,7 @@ def persist_evidence(
         raise RuntimeError("Supabase did not return the inserted source_file row")
     file_id = source_response.data[0]["file_id"]
 
-    return _insert_evidence_records(supabase, file_id, business_id, evidence)
+    return _insert_invoice_records(supabase, file_id, business_id, evidence)
 
 
 def persist_text_evidence(
@@ -304,6 +439,7 @@ def persist_text_evidence(
     """Insert raw text/chat message into Supabase storage, source_file, and evidence tables."""
     supabase = client or get_supabase_client()
     business_id = business_id.strip() if business_id else get_or_create_default_business(supabase)
+    _sync_business_profile(supabase, business_id, evidence)
     bucket = get_storage_bucket(supabase)
     safe_name = source_name if source_name.endswith(".txt") else f"{source_name}.txt"
     object_path = f"{business_id}/{uuid4()}-{safe_name}"
@@ -319,10 +455,10 @@ def persist_text_evidence(
     source_row = {
         "business_id": business_id,
         "file_name": safe_name,
-        "file_type": file_type,
         "mime_type": "text/plain",
         "storage_path": f"{bucket}/{object_path}",
         "file_hash": file_hash,
+        "page_count": getattr(evidence, "page_count", None),
         "processing_status": "processed" if evidence.processing_status == "success" else "failed",
     }
     source_response = supabase.table("source_file").insert(source_row).execute()
@@ -330,7 +466,7 @@ def persist_text_evidence(
         raise RuntimeError("Supabase did not return the inserted source_file row")
     file_id = source_response.data[0]["file_id"]
 
-    return _insert_evidence_records(supabase, file_id, business_id, evidence)
+    return _insert_invoice_records(supabase, file_id, business_id, evidence)
 
 
 def persist_image_evidence(
@@ -353,46 +489,11 @@ def persist_bank_statement_evidence(
     file_type: str = "bank_statement",
     client: Client | None = None,
 ) -> dict[str, str]:
-    """Persist bank statement CSV, summary, transactions, and provenance into Supabase."""
-    supabase = client or get_supabase_client()
-    business_id = business_id.strip() if business_id else get_or_create_default_business(supabase)
-    bucket = get_storage_bucket(supabase)
-
-    try:
-        path = Path(csv_text_or_path)
-        if path.is_file():
-            file_bytes = path.read_bytes()
-            safe_name = path.name
-        else:
-            file_bytes = str(csv_text_or_path).encode("utf-8")
-            safe_name = source_name if source_name.endswith((".csv", ".tsv", ".txt")) else f"{source_name}.csv"
-    except Exception:
-        file_bytes = str(csv_text_or_path).encode("utf-8")
-        safe_name = source_name if source_name.endswith((".csv", ".tsv", ".txt")) else f"{source_name}.csv"
-
-    object_path = f"{business_id}/{uuid4()}-{safe_name}"
-    supabase.storage.from_(bucket).upload(
-        object_path,
-        file_bytes,
-        {"content-type": "text/csv; charset=utf-8", "upsert": "false"},
+    """Reject bank statement persistence because the configured schema is invoice-only."""
+    raise ValueError(
+        "The current database schema stores invoices only. Bank CSV parsing remains "
+        "available, but persistence requires dedicated bank statement and transaction tables."
     )
-    file_hash = hashlib.sha256(file_bytes).hexdigest()
-
-    source_row = {
-        "business_id": business_id,
-        "file_name": safe_name,
-        "file_type": file_type,
-        "mime_type": "text/csv",
-        "storage_path": f"{bucket}/{object_path}",
-        "file_hash": file_hash,
-        "processing_status": "processed" if evidence.processing_status == "success" else "failed",
-    }
-    source_response = supabase.table("source_file").insert(source_row).execute()
-    if not source_response.data:
-        raise RuntimeError("Supabase did not return the inserted source_file row")
-    file_id = source_response.data[0]["file_id"]
-
-    return _insert_evidence_records(supabase, file_id, business_id, evidence)
 
 
 def persist_voice_evidence(
@@ -406,6 +507,7 @@ def persist_voice_evidence(
     """Persist audio voice recording file, transcription, and extracted financial fields into Supabase."""
     supabase = client or get_supabase_client()
     business_id = business_id.strip() if business_id else get_or_create_default_business(supabase)
+    _sync_business_profile(supabase, business_id, evidence)
     bucket = get_storage_bucket(supabase)
 
     if isinstance(audio_path_or_bytes, (str, os.PathLike)) and Path(audio_path_or_bytes).is_file():
@@ -434,10 +536,10 @@ def persist_voice_evidence(
     source_row = {
         "business_id": business_id,
         "file_name": safe_name,
-        "file_type": file_type,
         "mime_type": mime_type,
         "storage_path": f"{bucket}/{object_path}",
         "file_hash": file_hash,
+        "page_count": getattr(evidence, "page_count", None),
         "processing_status": "processed" if evidence.processing_status == "success" else "failed",
     }
     source_response = supabase.table("source_file").insert(source_row).execute()
@@ -445,4 +547,4 @@ def persist_voice_evidence(
         raise RuntimeError("Supabase did not return the inserted source_file row")
     file_id = source_response.data[0]["file_id"]
 
-    return _insert_evidence_records(supabase, file_id, business_id, evidence)
+    return _insert_invoice_records(supabase, file_id, business_id, evidence)
