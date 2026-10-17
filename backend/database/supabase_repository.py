@@ -372,6 +372,36 @@ def _insert_invoice_records(
     return {"file_id": file_id, "invoice_id": invoice_id, "evidence_id": invoice_id}
 
 
+def _index_saved_document_for_rag(
+    evidence: Any,
+    business_id: str,
+    file_id: str,
+    client: Client,
+) -> None:
+    """Best-effort indexing so a RAG setup issue does not fail document ingestion."""
+    text = getattr(evidence, "extracted_text", "") or ""
+    if not text.strip():
+        return
+
+    try:
+        from backend.rag.indexer import index_document
+
+        count = index_document(
+            text=text,
+            business_id=business_id,
+            source_file_id=file_id,
+            file_name=getattr(evidence, "file_name", "unknown"),
+            client=client,
+        )
+        LOGGER.info("Indexed %d RAG chunks for file_id=%s", count, file_id)
+    except Exception:
+        LOGGER.exception(
+            "Could not index file_id=%s for RAG. Confirm the document_chunks table exists "
+            "and install the RAG requirements.",
+            file_id,
+        )
+
+
 def persist_evidence(
     file_path: str | os.PathLike[str],
     evidence: Any,
@@ -402,7 +432,9 @@ def persist_evidence(
     if existing_files:
         file_id = existing_files[0]["file_id"]
         LOGGER.info("Reusing existing source_file for identical content: file_id=%s", file_id)
-        return _insert_invoice_records(supabase, file_id, business_id, evidence)
+        result = _insert_invoice_records(supabase, file_id, business_id, evidence)
+        _index_saved_document_for_rag(evidence, business_id, file_id, supabase)
+        return result
 
     object_path = f"{business_id}/{uuid4()}-{path.name}"
     with path.open("rb") as source_file:
@@ -425,7 +457,9 @@ def persist_evidence(
         raise RuntimeError("Supabase did not return the inserted source_file row")
     file_id = source_response.data[0]["file_id"]
 
-    return _insert_invoice_records(supabase, file_id, business_id, evidence)
+    result = _insert_invoice_records(supabase, file_id, business_id, evidence)
+    _index_saved_document_for_rag(evidence, business_id, file_id, supabase)
+    return result
 
 
 def persist_text_evidence(
@@ -466,7 +500,9 @@ def persist_text_evidence(
         raise RuntimeError("Supabase did not return the inserted source_file row")
     file_id = source_response.data[0]["file_id"]
 
-    return _insert_invoice_records(supabase, file_id, business_id, evidence)
+    result = _insert_invoice_records(supabase, file_id, business_id, evidence)
+    _index_saved_document_for_rag(evidence, business_id, file_id, supabase)
+    return result
 
 
 def persist_image_evidence(
@@ -547,4 +583,6 @@ def persist_voice_evidence(
         raise RuntimeError("Supabase did not return the inserted source_file row")
     file_id = source_response.data[0]["file_id"]
 
-    return _insert_invoice_records(supabase, file_id, business_id, evidence)
+    result = _insert_invoice_records(supabase, file_id, business_id, evidence)
+    _index_saved_document_for_rag(evidence, business_id, file_id, supabase)
+    return result
