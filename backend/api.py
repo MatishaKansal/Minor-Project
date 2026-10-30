@@ -1,4 +1,4 @@
-"""FastAPI endpoints used by the document retrieval frontend."""
+"""FastAPI endpoints used by the document retrieval and LLM cascade decision maker frontend."""
 
 import json
 import logging
@@ -10,15 +10,17 @@ from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
+from backend.cascade.service import CascadeDecisionMaker, evidence_to_cascade_dict
 from backend.parsers.bank_csv_parser import SUPPORTED_EXTENSIONS as BANK_CSV_EXTENSIONS
 from backend.rag.retriever import retrieve
+from backend.schemas.evidence import Evidence
 from backend.services.ingestion_service import ALL_SUPPORTED_EXTENSIONS, ingest_file
 
 LOGGER = logging.getLogger(__name__)
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 PERSISTABLE_EXTENSIONS = ALL_SUPPORTED_EXTENSIONS - BANK_CSV_EXTENSIONS
 
-app = FastAPI(title="Financial Document Retrieval API", version="0.1.0")
+app = FastAPI(title="Financial Document Retrieval & Cascade Decision API", version="0.2.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -30,6 +32,9 @@ app.add_middleware(
     allow_headers=["Content-Type"],
 )
 
+# Global Cascade Decision Maker instance
+DECISION_MAKER = CascadeDecisionMaker()
+
 
 def _event(event_type: str, **payload: Any) -> str:
     data = json.dumps({"type": event_type, **payload}, ensure_ascii=False)
@@ -37,8 +42,12 @@ def _event(event_type: str, **payload: Any) -> str:
 
 
 @app.get("/api/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
+def health() -> dict[str, Any]:
+    return {
+        "status": "ok",
+        "cascade_router_thresholds": DECISION_MAKER.router.thresholds,
+        "ollama_connected": DECISION_MAKER.client is not None,
+    }
 
 
 @app.post("/api/query")
@@ -47,7 +56,7 @@ async def query_documents(
     files: list[UploadFile] | None = File(default=None),
     business_id: str | None = Form(default=None),
 ) -> StreamingResponse:
-    """Persist uploaded files, retrieve relevant chunks, and stream progress/results."""
+    """Persist uploaded files, retrieve relevant chunks, execute the 4-tier LLM cascade decision maker, and stream progress/results."""
     clean_question = question.strip()
     if not clean_question:
         return StreamingResponse(
@@ -75,6 +84,7 @@ async def query_documents(
         yield _event("status", message="Your question is received.")
         saved_files: list[dict[str, str]] = []
         indexed_files: list[dict[str, str]] = []
+        parsed_evidence_list: list[Evidence] = []
         file_warnings: list[dict[str, str]] = [
             {"file_name": name, "message": "This file type is not supported."}
             for name in unsupported_uploads
@@ -104,6 +114,7 @@ async def query_documents(
                         })
                         continue
 
+                    parsed_evidence_list.append(evidence)
                     saved_file = {
                         "file_name": name,
                         "file_id": evidence.database_file_id or "",
@@ -140,21 +151,66 @@ async def query_documents(
                     file_warnings.append({"file_name": name, "message": str(exc)})
 
         yield _event("status", message="Finding document chunks related to your question…")
+        retrieved_chunks = []
         try:
             from backend.database.supabase_repository import get_or_create_default_business, get_supabase_client
 
             client = get_supabase_client()
             active_business_id = requested_business_id or get_or_create_default_business(client)
-            results = retrieve(
+            retrieved_chunks = retrieve(
                 clean_question,
                 active_business_id,
                 match_count=5,
-                min_similarity=0.50,
+                min_similarity=0.35,
                 client=client,
             )
+        except Exception as exc:
+            LOGGER.warning("Document retrieval bypassed or failed: %s", exc)
+
+        yield _event("status", message="Evaluating evidence through the 4-tier LLM cascade decision maker…")
+        try:
+            # Transform extracted multimodal evidence and retrieved RAG context into cascade input
+            cascade_evidence = evidence_to_cascade_dict(
+                evidence_list=parsed_evidence_list,
+                retrieved_chunks=retrieved_chunks,
+            )
+
+            # Execute the cascade with learned stop routing
+            decision = DECISION_MAKER.execute_decision(
+                query=clean_question,
+                evidence=cascade_evidence,
+            )
+
+            ai_answer = decision.get("answer", "")
+            stopped_tier = decision.get("stopped_tier", "layer_4")
+            stopped_model = decision.get("stopped_model", "")
+            stop_prob = decision.get("stop_probability")
+            tier_history = decision.get("tier_history", [])
+
             yield _event(
                 "results",
-                chunks=results,
+                chunks=retrieved_chunks,
+                files=saved_files,
+                indexed_files=indexed_files,
+                warnings=file_warnings,
+                llm_called=True,
+                answer=ai_answer,
+                stopped_tier=stopped_tier,
+                stopped_model=stopped_model,
+                stop_probability=stop_prob,
+                tier_history=tier_history,
+                is_mock=decision.get("is_mock", False),
+            )
+            yield _event(
+                "status",
+                message=f"Cascade decision reached at {stopped_tier} ({stopped_model}). Audit answer generated.",
+                done=True,
+            )
+        except Exception as exc:
+            LOGGER.exception("LLM Cascade decision maker failed: %s", exc)
+            yield _event(
+                "results",
+                chunks=retrieved_chunks,
                 files=saved_files,
                 indexed_files=indexed_files,
                 warnings=file_warnings,
@@ -162,16 +218,9 @@ async def query_documents(
             )
             yield _event(
                 "status",
-                message=(
-                    f"Found {len(results)} matching chunk(s). Showing the retrieved text; no AI answer was generated."
-                    if results
-                    else "No matching chunks found. Showing any files that were saved. No AI answer was generated."
-                ),
+                message=f"Retrieved {len(retrieved_chunks)} chunk(s). Cascade evaluation encountered an issue: {exc}",
                 done=True,
             )
-        except Exception as exc:
-            LOGGER.exception("Document retrieval failed")
-            yield _event("error", message=str(exc), files=indexed_files, warnings=file_warnings)
 
     return StreamingResponse(
         stream_events(),

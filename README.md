@@ -133,3 +133,42 @@ The batch verifier processes every supported image in `data/input/images/`, prin
 - **Missing symbols or dates:** increase source image resolution and check that the selected language matches the document.
 - **Unsupported or corrupt image:** convert it to PNG, JPG, WEBP, or TIFF and confirm that it opens normally in an image viewer.
 - **Low confidence:** the score is Tesseract's average word confidence; it is not a correctness guarantee and is `null` when Tesseract supplies no usable confidence values.
+
+---
+
+## LLM Cascade Decision Maker (Phase IV Integration)
+
+The backend now incorporates the **4-tier LLM Cascade Decision Maker** to dynamically answer financial audit queries from live extracted multimodal evidence and retrieved RAG context.
+
+### Architecture
+
+```text
+User Question + Live Evidence (PDF, Image, Bank CSV, RAG Chunks)
+                          │
+                          ▼
+                      Tier L1 (gpt-oss:20b-cloud)
+                          │
+                     Should Stop? (Learned Logistic Regression Router)
+                     ├─ Yes ──► Deliver Answer (Fast, Cheap)
+                     └─ No
+                          ▼
+                      Tier L2 (gemma4:cloud)
+                          │
+                     Should Stop?
+                     ├─ Yes ──► Deliver Answer
+                     └─ No
+                          ▼
+                      Tier L3 (nemotron-3-super:cloud)
+                          │
+                     Should Stop?
+                     ├─ Yes ──► Deliver Answer
+                     └─ No
+                          ▼
+                      Tier L4 (nemotron-3-ultra:cloud) ──► Deliver Final Answer
+```
+
+### Key Capabilities
+- **Runtime Verification Without Gold Answers:** Uses zero-leakage arithmetic, provenance, and citation verifiers (`backend/cascade/verifier.py`).
+- **Learned Logistic Regression Router:** Uses calibrated thresholds (`L1: 0.68, L2: 0.50, L3: 0.50`) trained on genuine audit traces to minimize tokens while eliminating false stops.
+- **Multimodal Pipeline Bridge:** Converts parsed `Evidence` records (line items, GST rates, tax totals, payments, and document chunks) into structured evidence JSON for the cascade (`backend/cascade/service.py`).
+- **Streaming Response Integration:** Streams intermediate status events (`file_indexed`, `status`) and returns final audit determinations with tier selection history.

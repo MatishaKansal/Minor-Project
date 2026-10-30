@@ -217,6 +217,9 @@ function App() {
             files: event.files || [],
             llmCalled: event.llm_called,
             answer: event.llm_called && event.answer ? event.answer : '',
+            stoppedTier: event.stopped_tier,
+            stoppedModel: event.stopped_model,
+            tierHistory: event.tier_history || [],
             resultsReceived: true,
           })
           ;(event.files || []).forEach((file) => {
@@ -332,12 +335,12 @@ function App() {
         <header className="topbar">
           <div className="case-heading">
             <button className="icon-button mobile-menu-button" onClick={() => setSidebarOpen(true)} aria-label="Open menu"><Icon name="menu" /></button>
-            <div><div className="case-title">Financial workspace <span>/</span> Document search</div><div className="case-subtitle">RAG retrieval · LLM answer generation is off</div></div>
+            <div><div className="case-title">Financial workspace <span>/</span> Document search</div><div className="case-subtitle">RAG retrieval · 4-tier LLM cascade decision maker</div></div>
           </div>
           <div className="topbar-actions">
             <span className="sample-label">LIVE RETRIEVAL</span>
             <button className="theme-button" onClick={() => setTheme((current) => current === 'dark' ? 'light' : 'dark')} aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}><Icon name={theme === 'dark' ? 'sun' : 'moon'} size={16} /><span>{theme === 'dark' ? 'Light mode' : 'Dark mode'}</span></button>
-            <button className="case-details" onClick={() => showNotice('Retrieved chunks are shown below. No LLM answer is generated yet.')}>Search details <span>⌄</span></button>
+            <button className="case-details" onClick={() => showNotice('Retrieved chunks and LLM cascade audit decisions are shown below.')}>Search details <span>⌄</span></button>
           </div>
         </header>
 
@@ -404,7 +407,7 @@ function App() {
 
                       {!message.busy && <section className={`answer-panel ${message.error ? 'answer-unavailable' : ''}`}>
                         <div className="section-title"><h3>Answer</h3><span>{message.answer ? 'Generated' : 'Not generated'}</span></div>
-                        {message.answer ? <p className="answer-copy">{message.answer}</p> : <div className="answer-empty-state"><span className="answer-empty-mark">i</span><div><strong>{message.error ? 'No answer available' : 'No answer generated'}</strong><p>{message.error ? 'The search did not finish, so there is no result to summarize.' : 'The search finished, but this version only retrieves document passages. It does not write an AI response yet.'}</p></div></div>}
+                        {message.answer ? <p className="answer-copy">{message.answer}</p> : <div className="answer-empty-state"><span className="answer-empty-mark">i</span><div><strong>{message.error ? 'No answer available' : 'No answer generated'}</strong><p>{message.error ? 'The search did not finish, so there is no result to summarize.' : 'The search finished, but no response could be derived from the provided evidence.'}</p></div></div>}
                       </section>}
                     </div>
                   </article>
@@ -421,7 +424,7 @@ function App() {
             <textarea value={draft} disabled={isBusy} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); sendMessage() } }} rows={1} aria-label="Message" placeholder="Ask about an invoice, payment, or expense…" />
             <div className="composer-bottom"><button type="button" className="attach-button" disabled={isBusy} onClick={() => fileInput.current?.click()}><Icon name="attach" size={16} /><span>Attach files</span></button><input ref={fileInput} type="file" hidden multiple accept=".pdf,.png,.jpg,.jpeg,.webp,.tif,.tiff,.txt,.xlsx,.xlsm,.wav,.mp3,.ogg,.flac,.aiff,.aif" onChange={handleFiles} /><div className="composer-controls"><span className="enter-hint">Enter to send</span><button className="send-button" type="submit" disabled={!draft.trim() || isBusy}><span>{isBusy ? 'Working…' : 'Send'}</span><Icon name="send" size={14} /></button></div></div>
           </form>
-          <div className="composer-note">Files are saved for future questions · Retrieved text is shown without an LLM-generated answer</div>
+          <div className="composer-note">Files are parsed and saved · Queries are audited dynamically by the LLM cascade decision maker</div>
         </div>
       </main>
 
