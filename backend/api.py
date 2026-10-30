@@ -107,6 +107,15 @@ async def query_documents(
                             persist_to_database=True,
                             business_id=requested_business_id,
                         )
+                        # If database persistence failed (e.g. Supabase unconfigured), fallback to in-memory extraction
+                        if evidence.processing_status != "success" and "supabase" in (evidence.error or "").lower():
+                            LOGGER.info("Retrying file %s with persist_to_database=False", name)
+                            evidence = ingest_file(
+                                temporary_path,
+                                persist_to_database=False,
+                                business_id=requested_business_id,
+                            )
+
                     if evidence.processing_status != "success":
                         file_warnings.append({
                             "file_name": name,
