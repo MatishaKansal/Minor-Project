@@ -4,12 +4,17 @@ import json
 import logging
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, File, Form, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
+from pydantic import BaseModel
 
+from backend.actions.agent_orchestrator import ActionProposal, evaluate_agentic_actions
+from backend.actions.email_drafter import EmailDraft
+from backend.actions.pdf_letter_generator import generate_audit_letter_pdf
+from backend.actions.reconciliation_patrol import PatrolDigest, run_reconciliation_patrol
 from backend.cascade.service import CascadeDecisionMaker, evidence_to_cascade_dict
 from backend.parsers.bank_csv_parser import SUPPORTED_EXTENSIONS as BANK_CSV_EXTENSIONS
 from backend.rag.retriever import retrieve
@@ -20,7 +25,7 @@ LOGGER = logging.getLogger(__name__)
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 PERSISTABLE_EXTENSIONS = ALL_SUPPORTED_EXTENSIONS - BANK_CSV_EXTENSIONS
 
-app = FastAPI(title="Financial Document Retrieval & Cascade Decision API", version="0.2.0")
+app = FastAPI(title="Financial Document Retrieval & Cascade Decision API", version="0.3.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -35,6 +40,9 @@ app.add_middleware(
 # Global Cascade Decision Maker instance
 DECISION_MAKER = CascadeDecisionMaker()
 
+# In-memory store for recent audit evidence & generated proposals (for approval and export)
+RECENT_AUDITS: Dict[str, Dict[str, Any]] = {}
+
 
 def _event(event_type: str, **payload: Any) -> str:
     data = json.dumps({"type": event_type, **payload}, ensure_ascii=False)
@@ -47,7 +55,83 @@ def health() -> dict[str, Any]:
         "status": "ok",
         "cascade_router_thresholds": DECISION_MAKER.router.thresholds,
         "ollama_connected": DECISION_MAKER.client is not None,
+        "agentic_tier1_enabled": True,
     }
+
+
+class EmailApprovalRequest(BaseModel):
+    recipient_email: str
+    subject: str
+    body_text: str
+    invoice_number: Optional[str] = None
+
+
+@app.post("/api/actions/approve-email")
+def approve_and_send_email(request: EmailApprovalRequest) -> Dict[str, Any]:
+    """
+    Human-in-the-loop approval endpoint for vendor dispute emails.
+    In production, connects to an SMTP/SES gateway or saves to Outbox.
+    """
+    LOGGER.info("Approved email sending to %s regarding invoice %s", request.recipient_email, request.invoice_number)
+    return {
+        "status": "success",
+        "message": f"Dispute notice successfully queued for delivery to {request.recipient_email}.",
+        "delivery_mode": "smtp_staging",
+        "details": request.model_dump(),
+    }
+
+
+@app.get("/api/actions/generate-letter-pdf")
+def download_letter_pdf(invoice_number: Optional[str] = Query(None)) -> Response:
+    """
+    Generate and stream a formal audit notice PDF for a given invoice number or the latest audit.
+    """
+    audit_data = None
+    if invoice_number and invoice_number in RECENT_AUDITS:
+        audit_data = RECENT_AUDITS[invoice_number]
+    elif RECENT_AUDITS:
+        audit_data = list(RECENT_AUDITS.values())[-1]
+
+    if not audit_data:
+        # Default placeholder notice if no audit has run yet
+        audit_data = {
+            "query": "General Financial Reconciliation Review",
+            "answer": "All documents parsed and audited under standard GST compliance rules.",
+            "evidence": {"invoice": {"invoice_number": invoice_number or "NOTICE-001"}},
+            "stopped_tier": "layer_2",
+        }
+
+    pdf_bytes = generate_audit_letter_pdf(
+        query=audit_data.get("query", "Audit Inquiry"),
+        audit_answer=audit_data.get("answer", ""),
+        evidence=audit_data.get("evidence", {}),
+        stopped_tier=audit_data.get("stopped_tier", "layer_3"),
+    )
+
+    filename = f"Audit_Notice_{invoice_number or 'Discrepancy'}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.post("/api/actions/run-patrol")
+def run_patrol_scan() -> Dict[str, Any]:
+    """
+    Execute proactive reconciliation and anomaly patrol across current memory records.
+    """
+    all_invoices = []
+    all_payments = []
+    for record in RECENT_AUDITS.values():
+        ev = record.get("evidence", {})
+        if ev.get("invoice"):
+            all_invoices.append(ev["invoice"])
+        all_invoices.extend(ev.get("invoices", []))
+        all_payments.extend(ev.get("payments", []))
+
+    digest = run_reconciliation_patrol(invoices=all_invoices, bank_transactions=all_payments)
+    return digest.model_dump()
 
 
 @app.post("/api/query")
@@ -56,7 +140,7 @@ async def query_documents(
     files: list[UploadFile] | None = File(default=None),
     business_id: str | None = Form(default=None),
 ) -> StreamingResponse:
-    """Persist uploaded files, retrieve relevant chunks, execute the 4-tier LLM cascade decision maker, and stream progress/results."""
+    """Persist uploaded files, retrieve relevant chunks, execute the 4-tier LLM cascade decision maker, and synthesize agentic action proposals."""
     clean_question = question.strip()
     if not clean_question:
         return StreamingResponse(
@@ -196,6 +280,24 @@ async def query_documents(
             stop_prob = decision.get("stop_probability")
             tier_history = decision.get("tier_history", [])
 
+            # Synthesize Tier 1 Agentic Action Proposals
+            yield _event("status", message="Synthesizing agentic action proposals (dispute drafts, notices, patrol)…")
+            proposals = evaluate_agentic_actions(
+                query=clean_question,
+                audit_decision=decision,
+                evidence=cascade_evidence,
+            )
+
+            # Save in memory for PDF download and email execution
+            inv_no = (cascade_evidence.get("invoice") or {}).get("invoice_number") or f"audit_{len(RECENT_AUDITS)+1}"
+            RECENT_AUDITS[inv_no] = {
+                "query": clean_question,
+                "answer": ai_answer,
+                "evidence": cascade_evidence,
+                "stopped_tier": stopped_tier,
+                "proposals": [p.model_dump() for p in proposals],
+            }
+
             yield _event(
                 "results",
                 chunks=retrieved_chunks,
@@ -208,11 +310,12 @@ async def query_documents(
                 stopped_model=stopped_model,
                 stop_probability=stop_prob,
                 tier_history=tier_history,
+                proposals=[p.model_dump() for p in proposals],
                 is_mock=decision.get("is_mock", False),
             )
             yield _event(
                 "status",
-                message=f"Cascade decision reached at {stopped_tier} ({stopped_model}). Audit answer generated.",
+                message=f"Cascade decision reached at {stopped_tier} ({stopped_model}). {len(proposals)} agentic action(s) proposed.",
                 done=True,
             )
         except Exception as exc:

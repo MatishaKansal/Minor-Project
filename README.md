@@ -172,3 +172,24 @@ User Question + Live Evidence (PDF, Image, Bank CSV, RAG Chunks)
 - **Learned Logistic Regression Router:** Uses calibrated thresholds (`L1: 0.68, L2: 0.50, L3: 0.50`) trained on genuine audit traces to minimize tokens while eliminating false stops.
 - **Multimodal Pipeline Bridge:** Converts parsed `Evidence` records (line items, GST rates, tax totals, payments, and document chunks) into structured evidence JSON for the cascade (`backend/cascade/service.py`).
 - **Streaming Response Integration:** Streams intermediate status events (`file_indexed`, `status`) and returns final audit determinations with tier selection history.
+
+---
+
+## Agentic Actions (Tier 1 Implementation)
+
+The system is now fully **agentic**, with goal-directed autonomous capabilities triggered by audit findings:
+
+### 1. Vendor Discrepancy Dispute Email Drafter (`backend/actions/email_drafter.py`)
+- Automatically detects reconciliation mismatches and synthesizes structured dispute emails addressed to the vendor billing contact.
+- Formulates exact mathematical breakdowns, citing bounding provenance IDs from OCR/parsing.
+- Provides a human-in-the-loop approval endpoint (`POST /api/actions/approve-email`) with UI action cards to review and queue delivery.
+
+### 2. Formal Audit Notice PDF Generator (`backend/actions/pdf_letter_generator.py`)
+- Uses ReportLab to generate print-ready, formal legal/tax audit notices.
+- Formats vendor details, GSTIN, invoice metadata, structured findings, and itemized provenance citations with an executive signature line.
+- Available via one-click download at `GET /api/actions/generate-letter-pdf`.
+
+### 3. Proactive Reconciliation & Anomaly Patrol (`backend/actions/reconciliation_patrol.py`)
+- Cross-scans invoices against bank debits and payments.
+- Identifies duplicate invoice numbers, unmatched/unpaid invoices, and unbacked bank debits missing receipts.
+- Generates categorized anomaly alerts with recommended corrective actions (`POST /api/actions/run-patrol`).

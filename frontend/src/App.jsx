@@ -81,6 +81,19 @@ function getSampleAnswer(prompt) {
 }
 
 function App() {
+  const approveEmailDraft = async (proposal) => {
+    try {
+      const res = await fetch("/api/actions/approve-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(proposal.payload)
+      });
+      const data = await res.json();
+      showNotice(data.message || "Dispute email approved and queued!");
+    } catch (err) {
+      showNotice("Email delivery approval failed: " + err.message);
+    }
+  };
   const [theme, setTheme] = useState(() => {
     try {
       return localStorage.getItem('ledgerline-react-theme') || 'dark'
@@ -220,6 +233,7 @@ function App() {
             stoppedTier: event.stopped_tier,
             stoppedModel: event.stopped_model,
             tierHistory: event.tier_history || [],
+            proposals: event.proposals || [],
             resultsReceived: true,
           })
           ;(event.files || []).forEach((file) => {
@@ -409,6 +423,46 @@ function App() {
                         <div className="section-title"><h3>Answer</h3><span>{message.answer ? 'Generated' : 'Not generated'}</span></div>
                         {message.answer ? <p className="answer-copy">{message.answer}</p> : <div className="answer-empty-state"><span className="answer-empty-mark">i</span><div><strong>{message.error ? 'No answer available' : 'No answer generated'}</strong><p>{message.error ? 'The search did not finish, so there is no result to summarize.' : 'The search finished, but no response could be derived from the provided evidence.'}</p></div></div>}
                       </section>}
+
+                      {!message.busy && message.proposals && message.proposals.length > 0 && (
+                        <section className="answer-panel" style={{ marginTop: "12px", borderLeft: "3px solid #3b82f6" }}>
+                          <div className="section-title">
+                            <h3>Proposed Agentic Actions</h3>
+                            <span style={{ color: "#2563eb", fontWeight: 600 }}>{message.proposals.length} Actionable</span>
+                          </div>
+                          <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginTop: "8px" }}>
+                            {message.proposals.map((prop, pIdx) => (
+                              <div key={prop.action_id || pIdx} style={{ padding: "10px 14px", background: "rgba(59, 130, 246, 0.05)", borderRadius: "6px", border: "1px solid rgba(59, 130, 246, 0.2)" }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                  <strong style={{ fontSize: "13px", color: "#1e3a8a" }}>{prop.title}</strong>
+                                  {prop.action_type === "draft_email" && (
+                                    <button
+                                      type="button"
+                                      className="theme-button"
+                                      style={{ padding: "4px 10px", fontSize: "11px", background: "#2563eb", color: "#ffffff" }}
+                                      onClick={() => approveEmailDraft(prop)}
+                                    >
+                                      Approve & Queue Email
+                                    </button>
+                                  )}
+                                  {prop.action_type === "generate_pdf" && (
+                                    <a
+                                      href={prop.payload?.download_url || "/api/actions/generate-letter-pdf"}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="theme-button"
+                                      style={{ padding: "4px 10px", fontSize: "11px", textDecoration: "none", background: "#059669", color: "#ffffff" }}
+                                    >
+                                      Download Notice PDF
+                                    </a>
+                                  )}
+                                </div>
+                                <p style={{ fontSize: "12px", margin: "6px 0 0", color: "#475569" }}>{prop.description}</p>
+                              </div>
+                            ))}
+                          </div>
+                        </section>
+                      )}
                     </div>
                   </article>
                 ))}
