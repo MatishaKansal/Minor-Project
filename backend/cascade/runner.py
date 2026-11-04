@@ -124,6 +124,7 @@ def call_tier_model_detailed(
     query = problem["query"]
     evidence = problem["evidence"]
 
+
     if not force_mock and client is not None:
         try:
             if previous_response and feedback:

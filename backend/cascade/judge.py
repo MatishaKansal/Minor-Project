@@ -136,6 +136,12 @@ def call_runtime_judge(
     Captures verified provider tokens and latency.
     """
     if client is None:
+        if allow_mock_fallback:
+            res = evaluate_with_mock_judge(
+                query, answer, evidence, None, runtime_verifier_result or {"runtime_pass": True, "reasons": []}
+            )
+            res["judge_model"] = f"{judge_model}_mock_fallback"
+            return res
         try:
             client = ollama.Client(host=OLLAMA_HOST)
         except Exception:
@@ -208,6 +214,12 @@ def call_llm_judge(
     Captures verified provider tokens and latency.
     """
     if client is None:
+        if allow_mock_fallback:
+            res = evaluate_with_mock_judge(
+                query, answer, evidence, ground_truth, deterministic_result or {"deterministic_pass": True, "reasons": []}
+            )
+            res["judge_model"] = f"{judge_model}_mock_fallback"
+            return res
         try:
             client = ollama.Client(host=OLLAMA_HOST)
         except Exception:

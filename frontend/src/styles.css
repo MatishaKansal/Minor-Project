@@ -246,3 +246,239 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid #8aa98a; outli
   .review-tag { font-size: 10px; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; } }
+
+/* =============================================================
+   Email Ingestion Connector Styles
+   ============================================================= */
+.connector-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 35px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 550;
+  cursor: pointer;
+  transition: all .15s ease;
+  white-space: nowrap;
+}
+.connector-badge:hover {
+  background: var(--surface-raised);
+  color: var(--text);
+  border-color: var(--accent);
+}
+.connector-badge.is-connected {
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--line));
+  background: color-mix(in srgb, var(--accent-soft) 40%, var(--surface));
+  color: var(--text);
+}
+.connector-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ce7373;
+}
+.connector-dot.is-active {
+  background: #76a47b;
+  box-shadow: 0 0 8px #76a47b66;
+  animation: status-pulse 2s infinite;
+}
+
+/* Modal Dialog */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(4px);
+  animation: fadeIn .15s ease-out;
+}
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.modal-dialog {
+  position: relative;
+  width: min(100%, 550px);
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 22px;
+  border-bottom: 1px solid var(--line);
+}
+.modal-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 16px;
+  font-weight: 650;
+  color: var(--text);
+}
+.modal-close {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.modal-close:hover {
+  background: var(--surface-raised);
+  color: var(--text);
+}
+
+.modal-body {
+  padding: 22px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.connector-tabs {
+  display: flex;
+  background: var(--surface-raised);
+  padding: 4px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  gap: 4px;
+}
+.connector-tab {
+  flex: 1;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all .15s ease;
+}
+.connector-tab.is-active {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.form-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+.form-input, .form-select {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface-raised);
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+  transition: border-color .15s;
+}
+.form-input:focus, .form-select:focus {
+  border-color: var(--accent);
+}
+.form-hint {
+  font-size: 11px;
+  color: var(--quiet);
+  line-height: 1.45;
+}
+
+.connected-card {
+  padding: 16px;
+  border-radius: 9px;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--line));
+  background: color-mix(in srgb, var(--accent-soft) 30%, var(--surface));
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.connected-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.connected-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 4px 8px;
+  border-radius: 99px;
+  background: #76a47b22;
+  color: #76a47b;
+  border: 1px solid #76a47b44;
+}
+
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 18px;
+  border: 0;
+  border-radius: 7px;
+  background: var(--accent-strong);
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: filter .15s;
+}
+.btn-primary:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+.btn-primary:disabled {
+  opacity: .5;
+  cursor: default;
+}
+
+.btn-danger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border: 1px solid color-mix(in srgb, #ce7373 40%, var(--line));
+  border-radius: 6px;
+  background: color-mix(in srgb, #ce7373 10%, transparent);
+  color: #e08080;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.btn-danger:hover {
+  background: color-mix(in srgb, #ce7373 20%, transparent);
+}
+

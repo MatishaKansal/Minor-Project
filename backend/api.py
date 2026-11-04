@@ -6,7 +6,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi import FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
@@ -15,6 +15,13 @@ from backend.actions.agent_orchestrator import ActionProposal, evaluate_agentic_
 from backend.actions.email_drafter import EmailDraft
 from backend.actions.pdf_letter_generator import generate_audit_letter_pdf
 from backend.actions.reconciliation_patrol import PatrolDigest, run_reconciliation_patrol
+from backend.connectors.email_connector import EMAIL_CONNECTOR, ConnectorAuthorizePayload
+from backend.connectors.pos_connector import (
+    POS_CONNECTOR,
+    BarcodeScanRequest,
+    POSAuthorizePayload,
+    POSBillPayload,
+)
 from backend.cascade.service import CascadeDecisionMaker, evidence_to_cascade_dict
 from backend.parsers.bank_csv_parser import SUPPORTED_EXTENSIONS as BANK_CSV_EXTENSIONS
 from backend.rag.retriever import retrieve
@@ -23,7 +30,7 @@ from backend.services.ingestion_service import ALL_SUPPORTED_EXTENSIONS, ingest_
 
 LOGGER = logging.getLogger(__name__)
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
-PERSISTABLE_EXTENSIONS = ALL_SUPPORTED_EXTENSIONS - BANK_CSV_EXTENSIONS
+PERSISTABLE_EXTENSIONS = (ALL_SUPPORTED_EXTENSIONS - BANK_CSV_EXTENSIONS) | {".txt"}
 
 app = FastAPI(title="Financial Document Retrieval & Cascade Decision API", version="0.3.0")
 app.add_middleware(
@@ -132,6 +139,176 @@ def run_patrol_scan() -> Dict[str, Any]:
 
     digest = run_reconciliation_patrol(invoices=all_invoices, bank_transactions=all_payments)
     return digest.model_dump()
+
+
+# -------------------------------------------------------------
+# Email Ingestion Connector Endpoints (Strict Authorization Gate)
+# -------------------------------------------------------------
+
+@app.get("/api/connectors/email/status")
+def get_email_connector_status() -> Dict[str, Any]:
+    """Returns the authorization status and metadata for the email connector."""
+    return EMAIL_CONNECTOR.get_status()
+
+
+@app.post("/api/connectors/email/authorize")
+def authorize_email_connector(payload: ConnectorAuthorizePayload) -> Dict[str, Any]:
+    """Authorizes the email connector using live IMAP credentials or demo mailbox."""
+    try:
+        result = EMAIL_CONNECTOR.authorize(payload)
+        return result
+    except ConnectionError as exc:
+        raise HTTPException(status_code=401, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to authorize email connector: {exc}")
+
+
+@app.post("/api/connectors/email/revoke")
+def revoke_email_connector() -> Dict[str, Any]:
+    """Revokes email connector authorization and clears session credentials."""
+    return EMAIL_CONNECTOR.revoke()
+
+
+class EmailSyncRequest(BaseModel):
+    business_id: Optional[str] = None
+    max_items: int = 2
+
+
+@app.post("/api/connectors/email/sync")
+def sync_email_inbox(request: Optional[EmailSyncRequest] = None) -> Dict[str, Any]:
+    """Polls the authorized email inbox/demo mailbox and ingests new invoices."""
+    if not EMAIL_CONNECTOR.is_authorized:
+        raise HTTPException(
+            status_code=403,
+            detail="Email Connector is not authorized. Please authorize via the dashboard modal first."
+        )
+    try:
+        b_id = request.business_id if request else None
+        m_items = request.max_items if request else 2
+        result = EMAIL_CONNECTOR.sync(business_id=b_id, max_items=m_items)
+
+        # Store generated proposals in RECENT_AUDITS for downstream letter generation
+        for item in result.get("items", []):
+            inv_no = item.get("invoice_number")
+            if inv_no:
+                RECENT_AUDITS[inv_no] = {
+                    "query": f"Automated email ingestion audit for invoice {inv_no}",
+                    "answer": f"Ingested {inv_no} from email sender {item.get('sender')}. Status: Ingested & Indexed.",
+                    "evidence": {"invoice": {"invoice_number": inv_no, "vendor_name": item.get("vendor_name"), "amount": item.get("amount")}},
+                    "stopped_tier": "layer_2",
+                    "proposals": result.get("proposals", []),
+                }
+
+        return result
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except ConnectionError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    except Exception as exc:
+        LOGGER.exception("Email sync endpoint failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# -------------------------------------------------------------
+# Point-of-Sale (POS) & Billing Software Connector Endpoints
+# -------------------------------------------------------------
+
+@app.get("/api/connectors/pos/status")
+def get_pos_connector_status() -> Dict[str, Any]:
+    """Returns the authorization status, store metadata, and catalog for the POS connector."""
+    return POS_CONNECTOR.get_status()
+
+
+@app.post("/api/connectors/pos/authorize")
+def authorize_pos_connector(payload: POSAuthorizePayload) -> Dict[str, Any]:
+    """Authorizes POS connector, creates session API key for webhook integration."""
+    try:
+        return POS_CONNECTOR.authorize(payload)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to authorize POS connector: {exc}")
+
+
+@app.post("/api/connectors/pos/revoke")
+def revoke_pos_connector() -> Dict[str, Any]:
+    """Revokes POS connector access and invalidates session token."""
+    return POS_CONNECTOR.revoke()
+
+
+@app.post("/api/connectors/pos/scan")
+def scan_pos_barcode(request: BarcodeScanRequest) -> Dict[str, Any]:
+    """Simulates an interactive checkout barcode scan and immediately generates a POS bill."""
+    if not POS_CONNECTOR.is_authorized:
+        raise HTTPException(
+            status_code=403,
+            detail="POS Connector is not authorized. Please authorize via the dashboard modal first."
+        )
+    try:
+        result = POS_CONNECTOR.scan_barcode(
+            barcode=request.barcode,
+            quantity=request.quantity,
+            payment_method=request.payment_method,
+            business_id=request.business_id,
+        )
+        # Store in RECENT_AUDITS for downstream letter/dispute generation
+        bill_no = result.get("bill_number")
+        if bill_no:
+            RECENT_AUDITS[bill_no] = {
+                "query": f"POS Retail Checkout Audit for bill {bill_no}",
+                "answer": f"Ingested POS Bill {bill_no} for INR {result.get('grand_total')}. File: {result.get('file_name')}",
+                "evidence": {"invoice": {"invoice_number": bill_no, "vendor_name": POS_CONNECTOR.store_name, "amount": result.get("grand_total")}},
+                "stopped_tier": "layer_1",
+                "proposals": result.get("proposals", []),
+            }
+        return result
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except Exception as exc:
+        LOGGER.exception("POS barcode scan endpoint failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+class POSBatchSyncRequest(BaseModel):
+    business_id: Optional[str] = None
+    batch_size: int = 3
+
+
+@app.post("/api/connectors/pos/sync-batch")
+def sync_pos_batch_register(request: Optional[POSBatchSyncRequest] = None) -> Dict[str, Any]:
+    """Synchronizes a batch of sales bills from the daily register and runs reconciliation patrol."""
+    if not POS_CONNECTOR.is_authorized:
+        raise HTTPException(
+            status_code=403,
+            detail="POS Connector is not authorized. Please authorize via the dashboard modal first."
+        )
+    try:
+        b_id = request.business_id if request else None
+        b_size = request.batch_size if request else 3
+        return POS_CONNECTOR.sync_batch_register(business_id=b_id, batch_size=b_size)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except Exception as exc:
+        LOGGER.exception("POS batch sync endpoint failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/api/connectors/pos/webhook")
+def receive_pos_webhook(
+    bill: POSBillPayload,
+    x_pos_api_key: Optional[str] = Header(None, alias="X-POS-API-KEY"),
+) -> Dict[str, Any]:
+    """Real-world POS webhook endpoint (Option A) for Vyapar, Tally, Zoho Books, and barcode registers."""
+    if not POS_CONNECTOR.is_authorized:
+        raise HTTPException(status_code=403, detail="POS Connector is not authorized in this system.")
+    if POS_CONNECTOR.api_key and x_pos_api_key != POS_CONNECTOR.api_key:
+        raise HTTPException(status_code=401, detail="Invalid X-POS-API-KEY header token.")
+
+    try:
+        return POS_CONNECTOR.process_incoming_bill(bill)
+    except Exception as exc:
+        LOGGER.exception("POS webhook ingestion failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @app.post("/api/query")
