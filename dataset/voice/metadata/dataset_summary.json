@@ -1,0 +1,21 @@
+{
+  "clips": 50,
+  "field_labels": 423,
+  "category_counts": {
+    "payment_confirmation": 8,
+    "partial_payment": 4,
+    "payment_followup": 4,
+    "amount_discrepancy": 9,
+    "purchase_order": 8,
+    "ledger_clarification": 7,
+    "document_request": 5,
+    "credit_note": 5
+  },
+  "mean_duration_seconds": 18.94,
+  "total_audio_minutes": 15.78,
+  "quality_counts": {
+    "clean": 30,
+    "mild_background_noise": 15,
+    "moderate_background_noise": 5
+  }
+}

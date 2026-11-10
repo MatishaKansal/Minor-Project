@@ -1,4 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
+import AdminUsers from './AdminUsers.jsx'
+import AuditWorkspace from './AuditWorkspace.jsx'
+import { AuthLoadingScreen, ProfileAccessScreen, SignInScreen } from './auth/AuthScreens.jsx'
+import { useAuth } from './auth/AuthContext.jsx'
 
 const recentChats = [
   { title: 'Vendor payment review', prompt: 'Was invoice INV-1048 paid twice?' },
@@ -101,11 +105,13 @@ function App() {
       showNotice("Email delivery approval failed: " + err.message);
     }
   };
+  const { loading: authLoading, session, profile, signOut, apiFetch } = useAuth()
+  const [activeView, setActiveView] = useState('dashboard')
   const [theme, setTheme] = useState(() => {
     try {
-      return localStorage.getItem('ledgerline-react-theme') || 'dark'
+      return localStorage.getItem('ledgerline-react-theme-v2') || 'light'
     } catch {
-      return 'dark'
+      return 'light'
     }
   })
   const [messages, setMessages] = useState([])
@@ -122,9 +128,9 @@ function App() {
 
   useEffect(() => {
     document.documentElement.style.colorScheme = theme
-    document.querySelector('meta[name="theme-color"]').content = theme === 'dark' ? '#171b18' : '#f3f5f1'
+    document.querySelector('meta[name="theme-color"]').content = theme === 'dark' ? '#17181b' : '#f1f2f5'
     try {
-      localStorage.setItem('ledgerline-react-theme', theme)
+      localStorage.setItem('ledgerline-react-theme-v2', theme)
     } catch {
       // The theme still works if storage is unavailable.
     }
@@ -136,6 +142,12 @@ function App() {
 
   useEffect(() => () => window.clearTimeout(noticeTimer.current), [])
 
+  useEffect(() => {
+    const handlePageChange = (event) => setActiveView(event.detail)
+    window.addEventListener('audit-page', handlePageChange)
+    return () => window.removeEventListener('audit-page', handlePageChange)
+  }, [])
+
   function showNotice(message) {
     setNotice(message)
     window.clearTimeout(noticeTimer.current)
@@ -144,6 +156,7 @@ function App() {
 
   function startNewChat() {
     if (isBusy) return
+    setActiveView('search')
     setMessages([])
     setDraft('')
     setAttachedFiles([])
@@ -523,7 +536,10 @@ function App() {
       body.append('question', question)
       files.forEach((file) => body.append('files', file, file.name))
 
-      const response = await fetch('/api/query', { method: 'POST', body })
+      if (files.length && !['administrator', 'auditor'].includes(profile.role)) {
+        throw new Error('Only auditors and administrators can upload evidence.')
+      }
+      const response = await apiFetch('/api/query', { method: 'POST', body })
       if (!response.ok) throw new Error(`The server returned ${response.status}.`)
       if (!response.body) throw new Error('This browser could not read the streamed response.')
 
@@ -639,17 +655,27 @@ function App() {
   }
 
   function selectRecentChat(chat) {
+    setActiveView('search')
     setSidebarOpen(false)
     sendMessage(chat.prompt)
   }
 
   function handleFiles(event) {
+    if (!['administrator', 'auditor'].includes(profile.role)) {
+      showNotice('Your role can search records but cannot upload evidence.')
+      event.target.value = ''
+      return
+    }
     const files = Array.from(event.target.files || [])
     if (!files.length) return
     setAttachedFiles((current) => [...current, ...files])
     showNotice(`${files.length} file${files.length === 1 ? '' : 's'} added to this draft`)
     event.target.value = ''
   }
+
+  if (authLoading) return <AuthLoadingScreen />
+  if (!session) return <SignInScreen />
+  if (!profile) return <ProfileAccessScreen />
 
   return (
     <div className={`app-shell theme-${theme}`}>
@@ -661,6 +687,23 @@ function App() {
         </div>
 
         <button className="new-chat-button" onClick={startNewChat} disabled={isBusy}><Icon name="plus" size={16} /> New conversation</button>
+
+        <div className="sidebar-section workspace-navigation">
+          <div className="section-heading">AUDIT WORKSPACE</div>
+          <nav className="workspace-nav" aria-label="Audit workspace">
+            {[['dashboard', 'Audit dashboard'], ['engagements', 'Engagements'], ['findings', 'Audit findings']].map(([view, label]) => (
+              <button key={view} className={`workspace-nav-item ${activeView === view ? 'is-selected' : ''}`} onClick={() => { setActiveView(view); setSidebarOpen(false) }}>
+                <span className="nav-indicator" />{label}
+              </button>
+            ))}
+            <button className={`workspace-nav-item ${activeView === 'search' ? 'is-selected' : ''}`} onClick={() => { setActiveView('search'); setSidebarOpen(false) }}>
+              <span className="nav-indicator" />Document search
+            </button>
+            {profile.role === 'administrator' && <button className={`workspace-nav-item ${activeView === 'users' ? 'is-selected' : ''}`} onClick={() => { setActiveView('users'); setSidebarOpen(false) }}>
+              <span className="nav-indicator" />User access
+            </button>}
+          </nav>
+        </div>
 
         <div className="sidebar-section">
           <div className="section-heading">RECENT CHATS</div>
@@ -687,13 +730,14 @@ function App() {
 
         <div className="sidebar-footer">
           <div className="workspace-status"><span className="status-dot" /> Supabase document search</div>
-          <div className="profile-row"><span className="profile-avatar">L</span><span className="profile-copy"><strong>Document workspace</strong><small>Supabase RAG</small></span><button className="profile-more" onClick={() => showNotice('Search uses your configured Supabase business workspace.')} aria-label="Workspace information">···</button></div>
+          <div className="profile-row"><span className="profile-avatar">{(profile.email || 'U').slice(0, 1).toUpperCase()}</span><span className="profile-copy"><strong>{profile.email || 'Signed-in user'}</strong><small>{profile.role.replaceAll('_', ' ')}</small></span><button className="profile-more" onClick={() => signOut()} aria-label="Sign out">↪</button></div>
         </div>
       </aside>
 
       {sidebarOpen && <button className="mobile-backdrop" onClick={() => setSidebarOpen(false)} aria-label="Close navigation" />}
 
       <main className="main-panel">
+        {activeView === 'search' ? <>
         <header className="topbar">
           <div className="case-heading">
             <button className="icon-button mobile-menu-button" onClick={() => setSidebarOpen(true)} aria-label="Open menu"><Icon name="menu" /></button>
@@ -731,8 +775,10 @@ function App() {
             </button>
 
             <span className="sample-label">LIVE RETRIEVAL</span>
+            <span className="sample-label">{profile.role.replaceAll('_', ' ').toUpperCase()}</span>
             <button className="theme-button" onClick={() => setTheme((current) => current === 'dark' ? 'light' : 'dark')} aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}><Icon name={theme === 'dark' ? 'sun' : 'moon'} size={16} /><span>{theme === 'dark' ? 'Light mode' : 'Dark mode'}</span></button>
             <button className="case-details" onClick={() => showNotice('Retrieved chunks and LLM cascade audit decisions are shown below.')}>Search details <span>⌄</span></button>
+            <button className="case-details" onClick={signOut}>Sign out</button>
           </div>
         </header>
 
@@ -854,10 +900,11 @@ function App() {
           {attachedFiles.length > 0 && <div className="attachment-list">{attachedFiles.map((file, index) => <span className="attachment-chip" key={`${file.name}-${index}`}><Icon name="file" size={13} />{file.name}<button type="button" onClick={() => setAttachedFiles((current) => current.filter((_, itemIndex) => itemIndex !== index))} aria-label={`Remove ${file.name}`}>×</button></span>)}</div>}
           <form className="composer" onSubmit={(event) => { event.preventDefault(); sendMessage() }}>
             <textarea value={draft} disabled={isBusy} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); sendMessage() } }} rows={1} aria-label="Message" placeholder="Ask about an invoice, payment, or expense…" />
-            <div className="composer-bottom"><button type="button" className="attach-button" disabled={isBusy} onClick={() => fileInput.current?.click()}><Icon name="attach" size={16} /><span>Attach files</span></button><input ref={fileInput} type="file" hidden multiple accept=".pdf,.png,.jpg,.jpeg,.webp,.tif,.tiff,.txt,.xlsx,.xlsm,.wav,.mp3,.ogg,.flac,.aiff,.aif" onChange={handleFiles} /><div className="composer-controls"><span className="enter-hint">Enter to send</span><button className="send-button" type="submit" disabled={!draft.trim() || isBusy}><span>{isBusy ? 'Working…' : 'Send'}</span><Icon name="send" size={14} /></button></div></div>
+            <div className="composer-bottom">{['administrator', 'auditor'].includes(profile.role) && <><button type="button" className="attach-button" disabled={isBusy} onClick={() => fileInput.current?.click()}><Icon name="attach" size={16} /><span>Attach files</span></button><input ref={fileInput} type="file" hidden multiple accept=".pdf,.png,.jpg,.jpeg,.webp,.tif,.tiff,.txt,.xlsx,.xlsm,.wav,.mp3,.ogg,.flac,.aiff,.aif" onChange={handleFiles} /></>}<div className="composer-controls"><span className="enter-hint">Enter to send</span><button className="send-button" type="submit" disabled={!draft.trim() || isBusy}><span>{isBusy ? 'Working…' : 'Send'}</span><Icon name="send" size={14} /></button></div></div>
           </form>
           <div className="composer-note">Files are parsed and saved · Queries are audited dynamically by the LLM cascade decision maker</div>
         </div>
+        </> : activeView === 'users' && profile.role === 'administrator' ? <AdminUsers /> : <AuditWorkspace page={activeView} role={profile.role} onOpenSearch={() => setActiveView('search')} />}
       </main>
 
       {connectorModalOpen && (

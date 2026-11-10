@@ -1,5 +1,6 @@
 """Shared deterministic financial field extraction across images and PDFs."""
 
+import difflib
 import re
 from typing import Any, NamedTuple
 
@@ -17,6 +18,11 @@ DocumentLine = tuple[int, int, str, str]  # (page_number, line_number, raw_line,
 def _normalize_text(text: str) -> str:
     """Strip BOM, null bytes, and normalise whitespace/punctuation noise."""
     text = text.lstrip("\ufeff")                     # BOM
+    if "â" in text:                                  # UTF-8 mis-decoded as cp1252 (e.g. "â‚¹" for ₹)
+        try:
+            text = text.encode("cp1252").decode("utf-8")
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            pass
     text = text.replace("\x00", "")                  # embedded nulls (PDF artefact)
     text = text.replace("\xa0", " ")                  # non-breaking space → space
     text = text.replace("\u2013", "-").replace("\u2014", "-")  # en-dash, em-dash → hyphen
@@ -71,7 +77,7 @@ _SEP = r"[\s\-/\.]"  # flexible separator between date parts
 # All date patterns, ordered from most-specific to least-specific
 _DATE_PATTERNS = [
     # "25 March 2024" / "25th March 2024" / "25-Mar-2024" / "25.Mar.2024"
-    rf"\b(\d{{1,2}}{_ORDINAL}{_SEP}{_MONTH_ABBR}{_SEP}\d{{4}})\b",
+    rf"\b(\d{{1,2}}{_ORDINAL}(?:\s+of)?{_SEP}{_MONTH_ABBR}{_SEP}\d{{4}})\b",
     # "March 25, 2024" / "March 25 2024" / "Mar-25-2024"
     rf"\b({_MONTH_ABBR}{_SEP}\d{{1,2}}{_ORDINAL}[,\s]*\d{{4}})\b",
     # ISO 8601: "2024-09-25" / "2024.09.25"
@@ -346,6 +352,14 @@ def extract_final_amount(
         ):
             score = 60
             method = "regex_total_label"
+        # Priority 3b: document statements such as "refund of ₹X", "order #N for ₹X", "invoice for ₹X"
+        elif re.search(
+            r"\b(?:refund|invoice|order|bill|payment|amount)\b[^.]*?(?:\bof\b|\bfor\b|\bis\b)\s*"
+            r"(?:[$\u20ac\xa3\u20b9\xa5]|rs\.?|inr|usd|eur|gbp)\s*\d",
+            low,
+        ):
+            score = 55
+            method = "regex_document_amount"
         # Priority 4: spoken / conversational financial action
         elif re.search(r"\b(?:paid|spent|transferred|transfer|sent|received|cost|charged|payment(?:\s+of)?)\b", low):
             score = 50
@@ -401,7 +415,8 @@ def extract_final_amount(
             score += 5
         score += (idx * 5) // max(total_count, 1)
 
-        candidates.append((score, amounts[-1], FieldSource(target_pno, target_lno, target_raw), method))
+        chosen = amounts[0] if re.search(r"\b(?:late\s+fee|penalty|surcharge)\b", low) else amounts[-1]
+        candidates.append((score, chosen, FieldSource(target_pno, target_lno, target_raw), method))
 
     if not candidates:
         return None, None, None
@@ -544,6 +559,23 @@ def _extract_document_number(lines: list[DocumentLine]) -> tuple[str | None, Fie
             if len(compact) >= 4 and not looks_like_date and _is_valid_ref(candidate):
                 return candidate, FieldSource(npno, nlno, nraw)
         return None, None
+
+    # Prefer an explicitly marked invoice number ("Invoice #8009", "Invoice No: INV-1") over PO/order refs.
+    for pno, lno, raw_line, line in lines:
+        m_inv = re.search(
+            r"\binvo[i1lx]ce\s*(?:no\.?|number|#)\s*[:\-]?\s*([A-Z0-9][A-Z0-9/\-]*\d)\b",
+            _normalize_text(line),
+            re.IGNORECASE,
+        )
+        if m_inv and _is_valid_ref(m_inv.group(1)):
+            return m_inv.group(1).strip(), FieldSource(pno, lno, raw_line)
+
+    # OCR-tolerant label ("Invoxce No. 4203304683", "Document No: 4203401552") followed by a long number.
+    for pno, lno, raw_line, line in lines:
+        for m_fz in re.finditer(r"\b([A-Za-z]{4,9})\s*(?:no\.?|number|#)\s*[:.]?\s*(\d{6,})\b", _normalize_text(line), re.IGNORECASE):
+            word = m_fz.group(1).lower()
+            if max(difflib.SequenceMatcher(None, word, t).ratio() for t in ("invoice", "document")) >= 0.6:
+                return m_fz.group(2), FieldSource(pno, lno, raw_line)
 
     for idx, (pno, lno, raw_line, line) in enumerate(lines):
         cleaned = _normalize_text(line)
@@ -874,6 +906,68 @@ def _extract_indian_invoice_items(lines: list[DocumentLine]) -> list[dict[str, A
 
 # ─── Top-level field extraction ───────────────────────────────────────────────
 
+_WORD_UNITS = {
+    "zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8,
+    "nine": 9, "ten": 10, "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14, "fifteen": 15,
+    "sixteen": 16, "seventeen": 17, "eighteen": 18, "nineteen": 19, "twenty": 20, "thirty": 30,
+    "forty": 40, "fifty": 50, "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90,
+}
+_WORD_SCALES = {"hundred": 100, "thousand": 1000, "lakh": 100000, "lakhs": 100000, "crore": 10000000, "crores": 10000000}
+_WORD_VOCAB = [*_WORD_UNITS, *_WORD_SCALES, "and", "paisa", "paise", "only", "rupees"]
+
+
+def _words_to_int(tokens: list[str]) -> int | None:
+    total = current = 0
+    seen = False
+    for tok in tokens:
+        if tok in _WORD_UNITS:
+            current += _WORD_UNITS[tok]
+            seen = True
+        elif tok == "hundred":
+            current = max(current, 1) * 100
+            seen = True
+        elif tok in _WORD_SCALES:
+            total += max(current, 1) * _WORD_SCALES[tok]
+            current = 0
+            seen = True
+        elif tok in ("and", "rupees"):
+            continue
+        else:
+            return None
+    return total + current if seen else None
+
+
+def _amount_from_words(full_text: str) -> str | None:
+    """Parse 'Amount in words: INR Six Lakh ... and Forty One Paisa Only' (OCR-tolerant) into a number."""
+    m = re.search(r"amount\s+in\s+words\s*:?\s*(?:INR|Rs\.?|rupees)?\s*([^\n]{5,200})", full_text, re.IGNORECASE)
+    if not m:
+        return None
+    tokens: list[str] = []
+    for raw in re.findall(r"[A-Za-z]+", m.group(1)):
+        hit = difflib.get_close_matches(raw.lower(), _WORD_VOCAB, 1, 0.8)
+        if not hit:
+            return None
+        tokens.append(hit[0])
+    if "only" in tokens:
+        tokens = tokens[: tokens.index("only")]
+    paise = 0
+    for marker in ("paisa", "paise"):
+        if marker in tokens:
+            at = tokens.index(marker)
+            head = tokens[:at]
+            split = len(head)
+            if "and" in head:
+                split = len(head) - 1 - head[::-1].index("and")
+            rupees_tokens, paise_tokens = head[:split], head[split + 1:]
+            paise_value = _words_to_int(paise_tokens)
+            rupees = _words_to_int(rupees_tokens)
+            if rupees is None or paise_value is None or paise_value > 99:
+                return None
+            return f"{rupees}.{paise_value:02d}"
+    rupees = _words_to_int(tokens)
+    return f"{rupees}.00" if rupees else None
+
+
 def extract_financial_fields(input_data: str | list[tuple[int, str]]) -> dict[str, Any]:
     """Extract financial fields from single-page text or multi-page PDF documents."""
     lines = to_document_lines(input_data)
@@ -917,7 +1011,8 @@ def extract_financial_fields(input_data: str | list[tuple[int, str]]) -> dict[st
         match = re.search(label_pattern + r"[^\n\r]*", full_text, re.IGNORECASE)
         if not match:
             return None
-        values = re.findall(r"(?<![A-Z])(?:₹|INR\s*)?([0-9]{1,3}(?:,[0-9]{2,3})*(?:\.[0-9]{1,2})?|[0-9]+\.[0-9]{1,2})", match.group(0), re.IGNORECASE)
+        segment = re.sub(rf"\b{_MONTH_ABBR}\.?\s+\d{{1,2}}(?:st|nd|rd|th)?,?\s+\d{{4}}\b", " ", match.group(0), flags=re.IGNORECASE)
+        values = re.findall(r"(?<![A-Z])(?:₹|INR\s*)?([0-9]{1,3}(?:,[0-9]{2,3})*(?:\.[0-9]{1,2})?|[0-9]+\.[0-9]{1,2})", segment, re.IGNORECASE)
         return _normalize_number(values[-1]) if values else None
 
     def _last_decimal_money(label_pattern: str) -> str | None:
@@ -1058,6 +1153,10 @@ def extract_financial_fields(input_data: str | list[tuple[int, str]]) -> dict[st
     if fields["buyer_gstin"]:
         fields["buyer_pan"] = fields["buyer_gstin"][2:12]
     fields["invoice_total"] = fields["invoice_total"] or fields["amount"]
+    words_total = _amount_from_words(full_text)
+    if words_total is not None:
+        # The printed "Amount in words" is the grand total and survives noisy scans of numeric tables.
+        fields["invoice_total"] = words_total
     fields["amount"] = fields["invoice_total"]
     if fields["amount"] == "0.00" and re.search(r"\b(?:paisa|paise)\s+only\b", full_text, re.IGNORECASE):
         # The words indicate a non-zero total, so an OCR-derived zero is contradictory.

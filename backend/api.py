@@ -6,7 +6,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, File, Form, Header, HTTPException, Query, UploadFile
+from fastapi import FastAPI, File, Form, Header, HTTPException, Query, UploadFile, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
@@ -22,6 +22,11 @@ from backend.connectors.pos_connector import (
     POSAuthorizePayload,
     POSBillPayload,
 )
+from fastapi.responses import StreamingResponse
+
+from backend.audit.router import router as audit_router
+from backend.auth import AuthenticatedUser, get_current_user
+from backend.auth_router import admin_router, router as auth_router
 from backend.cascade.service import CascadeDecisionMaker, evidence_to_cascade_dict
 from backend.parsers.bank_csv_parser import SUPPORTED_EXTENSIONS as BANK_CSV_EXTENSIONS
 from backend.rag.retriever import retrieve
@@ -33,6 +38,10 @@ MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 PERSISTABLE_EXTENSIONS = (ALL_SUPPORTED_EXTENSIONS - BANK_CSV_EXTENSIONS) | {".txt"}
 
 app = FastAPI(title="Financial Document Retrieval & Cascade Decision API", version="0.3.0")
+app = FastAPI(title="Financial Document Retrieval & Cascade Decision API", version="0.2.0")
+app.include_router(audit_router)
+app.include_router(auth_router)
+app.include_router(admin_router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -40,8 +49,8 @@ app.add_middleware(
         "http://127.0.0.1:5173",
     ],
     allow_credentials=False,
-    allow_methods=["GET", "POST"],
-    allow_headers=["Content-Type"],
+    allow_methods=["GET", "POST", "PATCH"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 # Global Cascade Decision Maker instance
@@ -316,6 +325,7 @@ async def query_documents(
     question: str = Form(...),
     files: list[UploadFile] | None = File(default=None),
     business_id: str | None = Form(default=None),
+    current_user: AuthenticatedUser = Depends(get_current_user),
 ) -> StreamingResponse:
     """Persist uploaded files, retrieve relevant chunks, execute the 4-tier LLM cascade decision maker, and synthesize agentic action proposals."""
     clean_question = question.strip()
@@ -324,6 +334,9 @@ async def query_documents(
             iter([_event("error", message="Please enter a question.")]),
             media_type="text/event-stream",
         )
+
+    if files and current_user.role not in {"administrator", "auditor"}:
+        raise HTTPException(status_code=403, detail="Only auditors and administrators can upload evidence.")
 
     upload_payloads: list[tuple[str, bytes]] = []
     unsupported_uploads: list[str] = []
@@ -340,6 +353,9 @@ async def query_documents(
         upload_payloads.append((name, content))
 
     requested_business_id = business_id.strip() if business_id else None
+    if requested_business_id and requested_business_id != current_user.business_id:
+        raise HTTPException(status_code=403, detail="The requested business is not assigned to this account.")
+    requested_business_id = current_user.business_id
 
     def stream_events():
         yield _event("status", message="Your question is received.")
@@ -423,13 +439,12 @@ async def query_documents(
         yield _event("status", message="Finding document chunks related to your question…")
         retrieved_chunks = []
         try:
-            from backend.database.supabase_repository import get_or_create_default_business, get_supabase_client
+            from backend.database.supabase_repository import get_supabase_client
 
             client = get_supabase_client()
-            active_business_id = requested_business_id or get_or_create_default_business(client)
             retrieved_chunks = retrieve(
                 clean_question,
-                active_business_id,
+                current_user.business_id,
                 match_count=5,
                 min_similarity=0.35,
                 client=client,

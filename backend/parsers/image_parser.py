@@ -203,6 +203,22 @@ def preprocess_image(image: Image.Image) -> Image.Image:
     return Image.fromarray(corrected)
 
 
+def preprocess_scan(image: Image.Image) -> Image.Image:
+    """Light preprocessing for low-resolution scans: grayscale + 2x cubic upscale, no binarisation.
+
+    Hard thresholding destroys thin glyph strokes in scanned invoices; Tesseract does its own
+    adaptive binarisation and reads the upscaled grayscale page far more accurately.
+    """
+    gray = np.asarray(image.convert("L"))
+    if gray.mean() < _DARK_THRESHOLD:
+        gray = 255 - gray
+    height, width = gray.shape
+    scale = 2.0 if width < 2000 else (1.0 if width >= 3000 else 1.5)
+    if scale != 1.0:
+        gray = cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+    return Image.fromarray(gray)
+
+
 def _confidence_from_data(data: dict[str, list[Any]]) -> float | None:
     values: list[float] = []
     for value, text in zip(data.get("conf", []), data.get("text", [])):
@@ -329,7 +345,7 @@ def extract_image_text(file_path: str | os.PathLike[str], language: str = DEFAUL
             top = round(index * page_height)
             bottom = round((index + 1) * page_height)
             page = image.crop((0, top, image.width, bottom))
-            prepared = preprocess_image(page)
+            prepared = preprocess_scan(page)
             result = extract_text_with_ocr(prepared, language)
             page_results.append(result)
             page_texts.append(result.text.strip())
@@ -340,7 +356,7 @@ def extract_image_text(file_path: str | os.PathLike[str], language: str = DEFAUL
             confidence_score=confidence,
             page_texts=page_texts,
         )
-    prepared = preprocess_image(image)
+    prepared = preprocess_scan(image)
     return extract_text_with_ocr(prepared, language)
 
 

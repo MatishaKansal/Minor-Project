@@ -1,0 +1,1 @@
+The bank debit for invoice C P five five nine is twenty nine thousand eight hundred rupees, but the ledger entry is twenty eight thousand eight hundred rupees. The one thousand rupee difference needs checking. Vendor is Crestline Pumps. Please do not change the ledger yet.

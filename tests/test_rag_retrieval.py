@@ -42,6 +42,105 @@ class HybridFakeSupabase(FakeSupabase):
         return self
 
 
+class FallbackFakeSupabase:
+    def __init__(self, table_results, rpc_results):
+        self.table_results = table_results
+        self.rpc_results = rpc_results
+        self.calls = []
+
+    def table(self, _name):
+        return self
+
+    def select(self, _columns):
+        return self
+
+    def eq(self, _column, _value):
+        return self
+
+    def ilike(self, _column, _value):
+        return self
+
+    def limit(self, _count):
+        return self
+
+    def rpc(self, name, params):
+        self.calls.append((name, params))
+        outer = self
+
+        class RpcCaller:
+            def execute(self):
+                return FakeResponse(outer.rpc_results)
+
+        return RpcCaller()
+
+    def execute(self):
+        return FakeResponse(self.table_results)
+
+
+def test_retriever_normalizes_day_first_date_and_skips_semantic_fallback(monkeypatch):
+    client = HybridFakeSupabase(
+        [{"chunk_id": "due-1", "content": "invoice_id: INV-1 due_date: 2024-05-15"}]
+    )
+    monkeypatch.setattr(
+        "backend.rag.retriever.embed_texts",
+        lambda _texts: (_ for _ in ()).throw(
+            AssertionError("date queries must not use semantic fallback")
+        ),
+    )
+
+    results = retrieve(
+        "Give me all transactions due on 15-05-2024",
+        "business-1",
+        match_count=5,
+        client=client,
+    )
+
+    assert results == [
+        {
+            "chunk_id": "due-1",
+            "content": "invoice_id: INV-1 due_date: 2024-05-15",
+            "similarity": 1.0,
+            "match_type": "exact",
+        }
+    ]
+
+
+def test_retriever_falls_back_to_semantic_when_date_has_no_exact_matches(monkeypatch):
+    client = FallbackFakeSupabase(
+        table_results=[],
+        rpc_results=[{"chunk_id": "sem-1", "similarity": 0.85, "content": "May transactions"}],
+    )
+    monkeypatch.setattr("backend.rag.retriever.embed_texts", lambda texts: [[0.1, 0.2]])
+
+    results = retrieve(
+        "Give me all transactions from 15-05-2024",
+        "business-1",
+        match_count=5,
+        client=client,
+    )
+
+    assert len(results) == 1
+    assert results[0]["chunk_id"] == "sem-1"
+    assert results[0]["similarity"] == 0.85
+    assert len(client.calls) == 1
+
+
+def test_retriever_prioritizes_numeric_invoice_identifier(monkeypatch):
+    client = HybridFakeSupabase([{"chunk_id": "chunk-numeric", "content": "Invoice No: 4203304680"}])
+    client.results = [{"chunk_id": "chunk-numeric", "content": "Invoice No: 4203304680"}]
+    monkeypatch.setattr("backend.rag.retriever.embed_texts", lambda texts: [[0.1, 0.2]])
+
+    results = retrieve(
+        "Find invoice 4203304680",
+        "business-1",
+        match_count=2,
+        client=client,
+    )
+
+    assert results[0]["chunk_id"] == "chunk-numeric"
+    assert results[0]["match_type"] == "exact"
+
+
 def test_retriever_sends_query_embedding_and_scope(monkeypatch):
     client = FakeSupabase([{"id": "chunk-1", "similarity": 0.92}])
     monkeypatch.setattr("backend.rag.retriever.embed_texts", lambda texts: [[0.1, 0.2]])

@@ -116,6 +116,37 @@ python tests/test_image_parser_database_manual.py
 
 The manual check does not delete, update, truncate, or drop records. It creates new invoice rows and verifies the source file, invoice, extraction, and field provenance by their returned IDs.
 
+### Evaluate RAG Retrieval
+
+RAG accuracy is not a single property: retrieval quality should be measured
+against labelled questions, while answer faithfulness requires a separate
+answer-evaluation set. The retrieval evaluator reports hit rate,
+precision@k, recall@k, and mean reciprocal rank (MRR). The included tests use
+mocked embeddings and Supabase responses, so they are deterministic and do
+not require credentials or change database data:
+
+```powershell
+pytest -q tests/test_rag_retrieval.py
+```
+
+These tests validate the retrieval contract and the metric calculations. To
+report production accuracy, add representative questions to
+`RetrievalCase` with the expected `document_chunks` IDs and run the same
+evaluator against the configured Supabase retriever. The resulting metrics
+are only as meaningful as those labels and the documents represented in the
+evaluation set.
+
+For the paper, evaluate the remaining RAG dimensions separately:
+
+- `evaluate_grounding()` measures the percentage of declared answer claims
+  supported by retrieved context.
+- `evaluate_reconciliation()` groups repeated records by a business key and
+  reports conflicting versus consistent field values across documents.
+
+These deterministic metrics do not replace human or LLM answer-quality
+assessment, but they make retrieval, grounding, and cross-document
+reconciliation claims reproducible.
+
 ### Business Image Batch
 
 All uploaded invoice documents for one business automatically use the same resolved business. Each image receives a new `source_file.file_id` and `invoice.invoice_id`:

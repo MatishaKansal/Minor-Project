@@ -106,6 +106,61 @@ class SpeechRecognitionEngine:
             raise ValueError(f"Failed to process audio file '{audio_path.name}': {exc}") from exc
 
 
+class WhisperEngine:
+    """Local Whisper STT (Hugging Face transformers); no network call per file."""
+
+    _pipelines: dict[str, Any] = {}
+
+    def __init__(self, model_name: str | None = None) -> None:
+        self.model_name = model_name or os.getenv("WHISPER_MODEL", "openai/whisper-base")
+
+    def _pipeline(self) -> Any:
+        if self.model_name not in self._pipelines:
+            from transformers import pipeline
+
+            self._pipelines[self.model_name] = pipeline(
+                "automatic-speech-recognition", model=self.model_name, chunk_length_s=30
+            )
+        return self._pipelines[self.model_name]
+
+    def transcribe(self, audio_path: Path, language: str = DEFAULT_LANGUAGE) -> STTResult:
+        if not audio_path.is_file():
+            raise FileNotFoundError(f"Audio file does not exist: {audio_path}")
+        try:
+            import numpy as np
+            import soundfile as sf
+
+            samples, rate = sf.read(str(audio_path), dtype="float32", always_2d=True)
+            mono = samples.mean(axis=1)
+            if rate != 16000:
+                import torch
+                import torchaudio.functional as taf
+
+                mono = taf.resample(torch.from_numpy(mono), rate, 16000).numpy()
+            lang = language.split("-")[0].lower()
+            result = self._pipeline()(
+                {"raw": np.asarray(mono, dtype="float32"), "sampling_rate": 16000},
+                generate_kwargs={"language": lang, "task": "transcribe"},
+            )
+        except ImportError as exc:
+            raise STTUnavailableError(f"Whisper dependencies are missing: {exc}") from exc
+        except Exception as exc:
+            raise ValueError(f"Failed to process audio file '{audio_path.name}': {exc}") from exc
+        return STTResult(text=str(result.get("text", "")).strip(), confidence_score=None)
+
+
+def default_stt_engine() -> STTEngine:
+    """Whisper by default; set STT_ENGINE=google for Google Speech Recognition."""
+    if os.getenv("STT_ENGINE", "whisper").lower() != "google":
+        try:
+            import transformers  # noqa: F401
+
+            return WhisperEngine()
+        except ImportError:
+            LOGGER.warning("transformers not installed; falling back to Google Speech Recognition")
+    return SpeechRecognitionEngine()
+
+
 class MockSTTEngine:
     """Mock STT engine for offline deterministic testing."""
 
@@ -144,7 +199,7 @@ def parse_voice_file(
     path = Path(file_path)
     try:
         validated_path = validate_voice_path(path)
-        stt_engine = engine or SpeechRecognitionEngine()
+        stt_engine = engine or default_stt_engine()
 
         stt_result = stt_engine.transcribe(validated_path, language=language)
         transcribed_text = stt_result.text.strip()

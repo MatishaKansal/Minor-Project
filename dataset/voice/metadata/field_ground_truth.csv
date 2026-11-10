@@ -1,0 +1,424 @@
+audio_id,field_name,expected_value
+AUD-001,vendor,Northstar Office Supplies
+AUD-001,contact,Riya
+AUD-001,invoice_id,AB2047
+AUD-001,transaction_date,2026-10-05
+AUD-001,amount,42500
+AUD-001,currency,INR
+AUD-001,payment_status,paid
+AUD-001,paid_amount,42500
+AUD-001,balance_due,0
+AUD-001,bank_reference,NEFT7812
+AUD-001,issue,Payment received
+AUD-001,requested_action,Mark invoice as paid
+AUD-002,vendor,Greenfield Packaging
+AUD-002,invoice_id,GP316
+AUD-002,transaction_date,2026-10-07
+AUD-002,amount,18750
+AUD-002,currency,INR
+AUD-002,payment_status,paid
+AUD-002,paid_amount,18750
+AUD-002,balance_due,0
+AUD-002,bank_reference,261007GFP9
+AUD-002,issue,Payment received
+AUD-002,requested_action,Update payment ledger
+AUD-003,vendor,Meridian Tools
+AUD-003,invoice_id,MT4821
+AUD-003,transaction_date,2026-10-09
+AUD-003,amount,63000
+AUD-003,currency,INR
+AUD-003,payment_status,paid
+AUD-003,paid_amount,63000
+AUD-003,balance_due,0
+AUD-003,bank_reference,IMPS44906
+AUD-003,issue,Payment confirmation requested
+AUD-003,requested_action,Confirm receipt
+AUD-004,vendor,Sunrise Components
+AUD-004,invoice_id,SC805
+AUD-004,transaction_date,2026-10-10
+AUD-004,amount,29400
+AUD-004,currency,INR
+AUD-004,payment_status,paid
+AUD-004,paid_amount,29400
+AUD-004,balance_due,0
+AUD-004,bank_reference,RTGS20261010SC
+AUD-004,issue,Payment received
+AUD-004,requested_action,Close payable
+AUD-005,vendor,Blue Kite Stationery
+AUD-005,contact,Aman
+AUD-005,invoice_id,BK912
+AUD-005,transaction_date,2026-10-12
+AUD-005,amount,12600
+AUD-005,currency,INR
+AUD-005,payment_status,paid
+AUD-005,paid_amount,12600
+AUD-005,balance_due,0
+AUD-005,bank_reference,HDFC09126
+AUD-005,issue,Payment received
+AUD-005,requested_action,Update account
+AUD-006,vendor,Cedar Retail
+AUD-006,invoice_id,CR4408
+AUD-006,transaction_date,2026-10-14
+AUD-006,amount,56220
+AUD-006,currency,INR
+AUD-006,payment_status,paid
+AUD-006,paid_amount,56220
+AUD-006,balance_due,0
+AUD-006,bank_reference,CDR4408N
+AUD-006,issue,Payment received
+AUD-006,requested_action,Record payment; close balance
+AUD-007,vendor,Apex Electricals
+AUD-007,contact,Neha
+AUD-007,invoice_id,AE117
+AUD-007,transaction_date,2026-10-16
+AUD-007,amount,8990
+AUD-007,currency,INR
+AUD-007,payment_status,paid
+AUD-007,paid_amount,8990
+AUD-007,balance_due,0
+AUD-007,bank_reference,616AE99
+AUD-007,issue,Payment received
+AUD-007,requested_action,Reconcile bank entry
+AUD-008,vendor,Orbit Safety Products
+AUD-008,invoice_id,OSP2079
+AUD-008,transaction_date,2026-10-18
+AUD-008,amount,31500
+AUD-008,currency,INR
+AUD-008,payment_status,paid
+AUD-008,paid_amount,31500
+AUD-008,balance_due,0
+AUD-008,bank_reference,ICICI72079
+AUD-008,issue,Payment received
+AUD-008,requested_action,Update vendor statement
+AUD-009,vendor,Delta Fabrication
+AUD-009,contact,Karan
+AUD-009,invoice_id,DF550
+AUD-009,transaction_date,2026-10-20
+AUD-009,amount,34000
+AUD-009,currency,INR
+AUD-009,payment_status,partially_paid
+AUD-009,paid_amount,20000
+AUD-009,balance_due,14000
+AUD-009,bank_reference,NEFTDF550
+AUD-009,issue,Partial payment
+AUD-009,requested_action,Keep remaining balance outstanding
+AUD-010,vendor,Pearl Stationers
+AUD-010,invoice_id,PR2019
+AUD-010,transaction_date,2026-10-21
+AUD-010,amount,24800
+AUD-010,currency,INR
+AUD-010,payment_status,partially_paid
+AUD-010,paid_amount,15000
+AUD-010,balance_due,9800
+AUD-010,bank_reference,UTRPS2115
+AUD-010,issue,Partial payment
+AUD-010,requested_action,Record balance due
+AUD-011,vendor,Kaveri Foods
+AUD-011,contact,Meera
+AUD-011,invoice_id,KF6031
+AUD-011,invoice_date,2026-10-01
+AUD-011,amount,46000
+AUD-011,currency,INR
+AUD-011,payment_status,unpaid
+AUD-011,paid_amount,0
+AUD-011,balance_due,46000
+AUD-011,issue,Payment overdue
+AUD-011,requested_action,Check payment release
+AUD-012,vendor,Vertex Machines
+AUD-012,invoice_id,VM772
+AUD-012,due_date,2026-10-22
+AUD-012,amount,72300
+AUD-012,currency,INR
+AUD-012,payment_status,unpaid
+AUD-012,paid_amount,0
+AUD-012,balance_due,72300
+AUD-012,issue,Overdue payment not received
+AUD-012,requested_action,Contact buyer
+AUD-013,vendor,Metro Print House
+AUD-013,contact,Salim
+AUD-013,invoice_id,MPH314
+AUD-013,transaction_date,2026-10-24
+AUD-013,amount,16500
+AUD-013,currency,INR
+AUD-013,payment_status,partially_paid
+AUD-013,paid_amount,10500
+AUD-013,balance_due,6000
+AUD-013,bank_reference,UPIMPH314
+AUD-013,issue,Partial payment
+AUD-013,requested_action,Record outstanding amount
+AUD-014,vendor,Riverbend Logistics
+AUD-014,invoice_id,RL9026
+AUD-014,invoice_date,2026-09-25
+AUD-014,due_date,2026-10-25
+AUD-014,amount,58000
+AUD-014,currency,INR
+AUD-014,payment_status,unpaid
+AUD-014,paid_amount,0
+AUD-014,balance_due,58000
+AUD-014,issue,Payment overdue
+AUD-014,requested_action,Follow up with vendor
+AUD-015,vendor,Harbor Chemicals
+AUD-015,invoice_id,HC409
+AUD-015,transaction_date,2026-10-26
+AUD-015,amount,91000
+AUD-015,currency,INR
+AUD-015,payment_status,partially_paid
+AUD-015,paid_amount,50000
+AUD-015,balance_due,41000
+AUD-015,bank_reference,UTRHC40950
+AUD-015,issue,Partial payment
+AUD-015,requested_action,Record remaining amount
+AUD-016,vendor,Nova Packaging
+AUD-016,contact,Pooja
+AUD-016,invoice_id,NP688
+AUD-016,transaction_date,2026-10-27
+AUD-016,amount,27000
+AUD-016,currency,INR
+AUD-016,payment_status,payment_sent_confirmation_pending
+AUD-016,paid_amount,27000
+AUD-016,bank_reference,NP68827
+AUD-016,issue,Payment sent; receipt unconfirmed
+AUD-016,requested_action,Confirm receipt
+AUD-017,vendor,Lotus Auto Parts
+AUD-017,invoice_id,LA4421
+AUD-017,amount,38400
+AUD-017,currency,INR
+AUD-017,po_id,PO7719
+AUD-017,issue,Invoice exceeds PO by INR 1500
+AUD-017,requested_action,Hold approval and review
+AUD-018,vendor,Silverline Glass
+AUD-018,invoice_id,SG210
+AUD-018,amount,22000
+AUD-018,currency,INR
+AUD-018,po_id,PO319
+AUD-018,issue,Invoice exceeds PO by INR 1500
+AUD-018,requested_action,Request buyer verification
+AUD-019,vendor,Easton Metals
+AUD-019,invoice_id,EM804
+AUD-019,amount,45600
+AUD-019,currency,INR
+AUD-019,po_id,PO1048
+AUD-019,issue,Invoice exceeds PO by INR 2000
+AUD-019,requested_action,Flag difference for review
+AUD-020,vendor,Crestline Pumps
+AUD-020,invoice_id,CP559
+AUD-020,amount,29800
+AUD-020,currency,INR
+AUD-020,issue,Bank debit exceeds ledger by INR 1000
+AUD-020,requested_action,Review before ledger adjustment
+AUD-021,vendor,Trident Refrigeration
+AUD-021,invoice_id,TR730
+AUD-021,amount,64200
+AUD-021,currency,INR
+AUD-021,po_id,PO6650
+AUD-021,issue,Unapproved transport charge of INR 3200
+AUD-021,requested_action,Request approval evidence
+AUD-022,vendor,Bright Road Traders
+AUD-022,invoice_id,BR193
+AUD-022,amount,60000
+AUD-022,currency,INR
+AUD-022,issue,Taxable value plus tax does not match printed total
+AUD-022,requested_action,Request corrected invoice
+AUD-023,vendor,Maple Steel Works
+AUD-023,invoice_id,MS802
+AUD-023,invoice_date,2026-10-28
+AUD-023,amount,17600
+AUD-023,currency,INR
+AUD-023,issue,Possible duplicate invoice
+AUD-023,requested_action,Check duplicate before posting
+AUD-024,vendor,Amber Office Systems
+AUD-024,amount,41200
+AUD-024,currency,INR
+AUD-024,bank_reference,AOS91
+AUD-024,issue,Bank debit exceeds invoice by INR 1000
+AUD-024,requested_action,Investigate additional debit
+AUD-025,vendor,Falcon Plastics
+AUD-025,invoice_id,FP620
+AUD-025,transaction_date,2026-10-29
+AUD-025,amount,4800
+AUD-025,currency,INR
+AUD-025,issue,Credit note missing from ledger
+AUD-025,requested_action,Include credit note in reconciliation
+AUD-026,vendor,Summit Office Mart
+AUD-026,amount,21000
+AUD-026,currency,INR
+AUD-026,issue,New purchase request: 25 cartons at INR 840 each
+AUD-026,requested_action,Create purchase order
+AUD-026,request_id,RQ208
+AUD-026,delivery_date,2026-11-04
+AUD-027,vendor,Silver Oak Furniture
+AUD-027,amount,9600
+AUD-027,currency,INR
+AUD-027,po_id,PO883
+AUD-027,issue,Three chairs short delivered; value INR 9600
+AUD-027,requested_action,Record shortage and contact supplier
+AUD-028,vendor,Pioneer Cables
+AUD-028,transaction_date,2026-10-30
+AUD-028,amount,82000
+AUD-028,currency,INR
+AUD-028,po_id,PO5512
+AUD-028,issue,Partial delivery; INR 22000 pending
+AUD-028,requested_action,Keep undelivered value pending
+AUD-029,vendor,SafeStep Industries
+AUD-029,amount,19800
+AUD-029,currency,INR
+AUD-029,po_id,PO4077
+AUD-029,issue,PO approved for 36 helmets at INR 550 each
+AUD-029,requested_action,Match incoming invoice
+AUD-030,vendor,Blue Peak Textiles
+AUD-030,amount,48000
+AUD-030,currency,INR
+AUD-030,po_id,PO9110
+AUD-030,issue,PO revised to 400 metres at INR 120 per metre
+AUD-030,requested_action,Use revised PO value
+AUD-031,vendor,Westwind Electronics
+AUD-031,amount,4900
+AUD-031,currency,INR
+AUD-031,po_id,PO6302
+AUD-031,issue,One router billed beyond PO quantity
+AUD-031,requested_action,Hold extra line for approval
+AUD-032,vendor,Meadow Farm Supplies
+AUD-032,transaction_date,2026-11-01
+AUD-032,amount,27600
+AUD-032,currency,INR
+AUD-032,po_id,PO2265
+AUD-032,issue,Goods received; invoice missing
+AUD-032,requested_action,Request invoice
+AUD-033,vendor,Cityline Power
+AUD-033,amount,16800
+AUD-033,currency,INR
+AUD-033,issue,Purchase request awaiting budget check
+AUD-033,requested_action,Check budget before PO
+AUD-033,request_id,RQ770
+AUD-034,vendor,Alpine Gears
+AUD-034,invoice_id,AG331
+AUD-034,transaction_date,2026-11-02
+AUD-034,amount,56000
+AUD-034,currency,INR
+AUD-034,issue,Ledger debit exceeds invoice by INR 6000
+AUD-034,requested_action,Review possible posting error
+AUD-035,vendor,Orchid Services
+AUD-035,transaction_date,2026-11-02
+AUD-035,amount,14500
+AUD-035,currency,INR
+AUD-035,payment_status,unmatched_credit
+AUD-035,bank_reference,BR20261102
+AUD-035,issue,Bank credit has no matching invoice or receipt
+AUD-035,requested_action,Keep unmatched pending evidence
+AUD-036,vendor,Ridgeway Hardware
+AUD-036,invoice_id,RH788
+AUD-036,transaction_date,2026-11-03
+AUD-036,amount,30000
+AUD-036,currency,INR
+AUD-036,paid_amount,33000
+AUD-036,bank_reference,NEFTRH788
+AUD-036,issue,Bank debit exceeds ledger amount by INR 3000
+AUD-036,requested_action,Investigate difference
+AUD-037,vendor,East Gate Services
+AUD-037,transaction_date,2026-11-04
+AUD-037,amount,19200
+AUD-037,currency,INR
+AUD-037,bank_reference,EGS442
+AUD-037,issue,Possible duplicate bank debit
+AUD-037,requested_action,Check duplicate bank posting
+AUD-038,vendor,Clearview Medical Supplies
+AUD-038,transaction_date,2026-11-05
+AUD-038,amount,7500
+AUD-038,currency,INR
+AUD-038,payment_status,partially_paid
+AUD-038,paid_amount,5000
+AUD-038,balance_due,14500
+AUD-038,issue,Verify closing payable calculation
+AUD-038,requested_action,Verify ledger closing balance
+AUD-039,transaction_date,2026-11-05
+AUD-039,amount,11000
+AUD-039,currency,INR
+AUD-039,issue,Cash deposit exceeds cash book by INR 500
+AUD-039,requested_action,Verify deposit slip
+AUD-040,vendor,Horizon Cleaning
+AUD-040,transaction_date,2026-11-06
+AUD-040,amount,26400
+AUD-040,currency,INR
+AUD-040,payment_status,paid
+AUD-040,paid_amount,26400
+AUD-040,balance_due,0
+AUD-040,bank_reference,HC660
+AUD-040,issue,Payment posted to wrong expense category
+AUD-040,requested_action,Reclassify ledger entry
+AUD-041,vendor,Pinecone Traders
+AUD-041,contact,Kavita
+AUD-041,invoice_id,PT880
+AUD-041,amount,21300
+AUD-041,currency,INR
+AUD-041,payment_status,pending_document
+AUD-041,balance_due,21300
+AUD-041,issue,Invoice copy missing
+AUD-041,requested_action,Resend PDF invoice
+AUD-042,vendor,Greenridge Foods
+AUD-042,invoice_id,GR502
+AUD-042,invoice_date,2026-11-01
+AUD-042,amount,37800
+AUD-042,currency,INR
+AUD-042,payment_status,pending_document
+AUD-042,balance_due,37800
+AUD-042,issue,Delivery challan and GRN missing
+AUD-042,requested_action,Request supporting delivery documents
+AUD-043,vendor,Willow Homeware
+AUD-043,invoice_id,WH319
+AUD-043,transaction_date,2026-11-02
+AUD-043,amount,6400
+AUD-043,currency,INR
+AUD-043,issue,Four damaged units returned; value INR 6400
+AUD-043,requested_action,Prepare credit note
+AUD-044,vendor,Red Maple Distributors
+AUD-044,invoice_id,RM941
+AUD-044,transaction_date,2026-11-03
+AUD-044,amount,2750
+AUD-044,currency,INR
+AUD-044,issue,Price adjustment credit note
+AUD-044,requested_action,Reduce outstanding payable
+AUD-045,vendor,Cedar Labs
+AUD-045,amount,52000
+AUD-045,currency,INR
+AUD-045,po_id,PO8006
+AUD-045,issue,Supplier invoice and tax breakdown missing
+AUD-045,requested_action,Request invoice and tax details
+AUD-046,vendor,Monarch Drives
+AUD-046,invoice_id,MD662
+AUD-046,transaction_date,2026-11-04
+AUD-046,amount,9800
+AUD-046,currency,INR
+AUD-046,issue,One motor unit returned; credit note pending
+AUD-046,requested_action,Hold returned item pending credit note
+AUD-047,vendor,Silver Fern Technologies
+AUD-047,contact,Dev
+AUD-047,transaction_date,2026-11-05
+AUD-047,amount,48600
+AUD-047,currency,INR
+AUD-047,payment_status,paid_allocation_unknown
+AUD-047,paid_amount,48600
+AUD-047,bank_reference,SFT486
+AUD-047,issue,Remittance advice missing
+AUD-047,requested_action,Request payment allocation
+AUD-048,vendor,Beacon Tyres
+AUD-048,invoice_id,BT244
+AUD-048,transaction_date,2026-11-05
+AUD-048,amount,1800
+AUD-048,currency,INR
+AUD-048,issue,Three percent rebate; expected credit INR 1800
+AUD-048,requested_action,Verify and record credit adjustment
+AUD-049,vendor,Alpine Roadworks
+AUD-049,invoice_id,AR335
+AUD-049,amount,84000
+AUD-049,currency,INR
+AUD-049,payment_status,pending_document
+AUD-049,balance_due,84000
+AUD-049,issue,Approval email and measurement sheet missing
+AUD-049,requested_action,Request approval and measurement sheet
+AUD-050,vendor,North Valley Cements
+AUD-050,invoice_id,NV108
+AUD-050,transaction_date,2026-11-05
+AUD-050,amount,3600
+AUD-050,currency,INR
+AUD-050,issue,Short supply adjustment approved for INR 3600
+AUD-050,requested_action,Link adjustment and update payable
