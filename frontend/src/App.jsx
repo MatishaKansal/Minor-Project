@@ -3,6 +3,7 @@ import PlatformDashboard from './PlatformDashboard.jsx'
 import CompanyWorkspace from './CompanyWorkspace.jsx'
 import { AuthLoadingScreen, ProfileAccessScreen, SignInScreen } from './auth/AuthScreens.jsx'
 import { useAuth } from './auth/AuthContext.jsx'
+import ledgerlineLogoWhite from './assets/ledgerline_logo_white.png'
 
 const suggestions = [
   { title: 'Check for duplicate payments', description: 'Compare invoices with bank activity' },
@@ -64,13 +65,6 @@ function Workspace() {
   };
   const { loading: authLoading, session, profile, signOut, apiFetch } = useAuth()
   const [activeView, setActiveView] = useState('overview')
-  const [theme, setTheme] = useState(() => {
-    try {
-      return localStorage.getItem('ledgerline-react-theme-v2') || 'light'
-    } catch {
-      return 'light'
-    }
-  })
   const [messages, setMessages] = useState([])
   const [draft, setDraft] = useState('')
   const [attachedFiles, setAttachedFiles] = useState([])
@@ -102,14 +96,15 @@ function Workspace() {
   }
 
   useEffect(() => {
-    document.documentElement.style.colorScheme = theme
-    document.querySelector('meta[name="theme-color"]').content = theme === 'dark' ? '#17181b' : '#f1f2f5'
+    document.documentElement.style.colorScheme = 'light'
+    const meta = document.querySelector('meta[name="theme-color"]')
+    if (meta) meta.content = '#f1f2f5'
     try {
-      localStorage.setItem('ledgerline-react-theme-v2', theme)
+      localStorage.setItem('ledgerline-react-theme-v2', 'light')
     } catch {
-      // The theme still works if storage is unavailable.
+      // Storage unavailable
     }
-  }, [theme])
+  }, [])
 
   useEffect(() => {
     conversationEnd.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
@@ -633,16 +628,18 @@ function Workspace() {
   if (!profile) return <ProfileAccessScreen />
 
   return (
-    <div className={`app-shell theme-${theme} company-shell`}>
+    <div className="app-shell theme-light company-shell">
       <aside className={`sidebar company-sidebar ${sidebarOpen ? 'sidebar-open' : ''}`}>
         <div className="brand-row">
-          <div className="brand"><span className="brand-mark">L</span><span>ledgerline</span></div>
+          <div className="brand">
+            <img src={ledgerlineLogoWhite} alt="Ledgerline" className="brand-logo-img" style={{ height: '32px', width: 'auto', display: 'block' }} />
+          </div>
           <button className="icon-button sidebar-close" onClick={() => setSidebarOpen(false)} aria-label="Close menu"><Icon name="close" /></button>
         </div>
         <div className="sidebar-section workspace-navigation">
           <div className="section-heading">YOUR WORKSPACE</div>
           <nav className="workspace-nav" aria-label="Company navigation">
-            {[['overview', 'Overview'], ['documents', 'My Documents'], ['transactions', 'Transactions'], ['checks', 'Financial Checks'], ['reports', 'Reports'], ['search', 'Financial Assistant'], ['settings', 'Company Settings']].map(([view, label]) => (
+            {[['overview', 'Overview'], ['documents', 'My Documents'], ['transactions', 'Transactions'], ['checks', 'Financial Checks'], ['reports', 'Reports'], ['reconciliation', 'Reconciliation'], ['search', 'Financial Assistant'], ['settings', 'Company Settings']].map(([view, label]) => (
               <button key={view} className={`workspace-nav-item ${activeView === view ? 'is-selected' : ''}`} onClick={() => { setActiveView(view); setSidebarOpen(false) }}>
                 <span className="nav-indicator" />{label}
               </button>
@@ -665,7 +662,6 @@ function Workspace() {
           </div>
           <div className="topbar-actions">
             <button className="case-details" onClick={startNewChat} disabled={isBusy}>New conversation</button>
-            <button className="theme-button" onClick={() => setTheme((current) => current === 'dark' ? 'light' : 'dark')} aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}><Icon name={theme === 'dark' ? 'sun' : 'moon'} size={16} /><span>{theme === 'dark' ? 'Light mode' : 'Dark mode'}</span></button>
           </div>
         </header>
 

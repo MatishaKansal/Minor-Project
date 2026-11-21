@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useAuth } from './auth/AuthContext.jsx'
+import ledgerlineLogoWhite from './assets/ledgerline_logo_white.png'
 import './audit.css'
 import './platform.css'
 
@@ -146,7 +147,7 @@ export default function PlatformDashboard() {
 
   return <div className="app-shell theme-light platform-shell">
     <aside className="sidebar platform-sidebar">
-      <div className="brand-row"><div className="brand"><span className="brand-mark">L</span><span>Ledgerline</span></div></div>
+      <div className="brand-row"><div className="brand"><img src={ledgerlineLogoWhite} alt="Ledgerline" style={{ height: '32px', width: 'auto', display: 'block' }} /></div></div>
       <div className="platform-admin-label"><span aria-hidden="true">✦</span> Platform Admin</div>
       <div className="sidebar-section">
         <nav className="workspace-nav" aria-label="Platform navigation">{pages.map(([key, label]) =>

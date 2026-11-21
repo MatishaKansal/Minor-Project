@@ -169,6 +169,14 @@ def _database_date(value: str | None) -> str | None:
         "%b %d %Y",
         "%d %B %Y",
         "%d %b %Y",
+        "%d-%b-%Y",
+        "%d-%B-%Y",
+        "%d-%b-%y",
+        "%d-%B-%y",
+        "%d/%b/%Y",
+        "%d/%B/%Y",
+        "%b-%d-%Y",
+        "%B-%d-%Y",
     )
     for pattern in formats:
         try:

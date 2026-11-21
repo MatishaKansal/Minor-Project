@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useAuth } from './AuthContext.jsx'
 import LoadingScreen from '../LoadingScreen.jsx'
+import ledgerlineLogoWhite from '../assets/ledgerline_logo_white.png'
 
 export function SignInScreen() {
   const { configured, signIn } = useAuth()
@@ -26,7 +27,7 @@ export function SignInScreen() {
     <main className="auth-screen">
       <div className="auth-layout">
       <aside className="auth-hero">
-        <div className="auth-brand"><span className="brand-mark">L</span><strong>ledgerline</strong></div>
+        <div className="auth-brand"><img src={ledgerlineLogoWhite} alt="Ledgerline" style={{ height: '36px', width: 'auto', display: 'block' }} /></div>
         <div>
           <h2>Make sense of your finances, in one place.</h2>
           <p>Bring your records together, check for issues and understand what needs your attention.</p>

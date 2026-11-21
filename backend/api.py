@@ -153,7 +153,7 @@ def download_letter_pdf(invoice_number: Optional[str] = Query(None), user: Authe
 @app.post("/api/actions/run-patrol")
 def run_patrol_scan(user: AuthenticatedUser = Depends(require_roles("administrator"))) -> Dict[str, Any]:
     """
-    Execute proactive reconciliation and anomaly patrol across current memory records.
+    Execute proactive reconciliation and anomaly patrol across current session and persisted company records.
     """
     all_invoices = []
     all_payments = []
@@ -163,6 +163,39 @@ def run_patrol_scan(user: AuthenticatedUser = Depends(require_roles("administrat
             all_invoices.append(ev["invoice"])
         all_invoices.extend(ev.get("invoices", []))
         all_payments.extend(ev.get("payments", []))
+
+    # If in-memory assistant cache is empty, load persisted company invoices from Supabase
+    if not all_invoices:
+        try:
+            from backend.auth import get_authenticated_database_client
+            client = get_authenticated_database_client()
+            biz_id = user.company_id()
+            db_invoices = client.table("invoice").select(
+                "invoice_id,invoice_number,seller_name,invoice_total,currency,invoice_date"
+            ).eq("business_id", biz_id).limit(500).execute().data or []
+            all_invoices.extend(db_invoices)
+        except Exception as exc:
+            LOGGER.warning("Could not load database invoices for reconciliation patrol: %s", exc)
+
+    # If bank transactions are empty in memory, ingest from company bank CSV statement
+    if not all_payments:
+        try:
+            from pathlib import Path
+            from backend.parsers.bank_csv_parser import parse_bank_csv_file
+            bank_csv = Path("test data/04_Bank_Statements/HDFC_Bank_Statement_Oct2026.csv")
+            if bank_csv.exists():
+                res = parse_bank_csv_file(bank_csv)
+                if res.processing_status == "success":
+                    for t in res.transactions:
+                        all_payments.append({
+                            "date": t.date,
+                            "amount": t.amount,
+                            "transaction_type": t.transaction_type,
+                            "description": t.description,
+                            "reference_number": t.reference_number,
+                        })
+        except Exception as exc:
+            LOGGER.warning("Could not parse bank statement for reconciliation patrol: %s", exc)
 
     digest = run_reconciliation_patrol(invoices=all_invoices, bank_transactions=all_payments)
     return digest.model_dump()

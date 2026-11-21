@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useAuth } from './auth/AuthContext.jsx'
-import AuditWorkspace from './AuditWorkspace.jsx'
 import './company.css'
 
 const money = (value, currency) => value === null || value === undefined || value === ''
@@ -40,7 +39,6 @@ export default function CompanyWorkspace({ page, navigate, onAskDocument, openEm
   const [uploadFiles, setUploadFiles] = useState([])
   const [uploading, setUploading] = useState(false)
   const [documentReview, setDocumentReview] = useState(null)
-  const [advancedPage, setAdvancedPage] = useState('engagements')
   const uploadRef = useRef(null)
 
   const load = useCallback(async () => {
@@ -86,13 +84,6 @@ export default function CompanyWorkspace({ page, navigate, onAskDocument, openEm
   }, [apiFetch])
 
   useEffect(() => { load() }, [load])
-  useEffect(() => {
-    const changePage = (event) => {
-      if (['dashboard', 'engagements', 'findings'].includes(event.detail)) setAdvancedPage(event.detail)
-    }
-    window.addEventListener('audit-page', changePage)
-    return () => window.removeEventListener('audit-page', changePage)
-  }, [])
   useEffect(() => {
     let active = true
     if (!selectedId) { setDetail(null); return () => { active = false } }
@@ -164,6 +155,25 @@ export default function CompanyWorkspace({ page, navigate, onAskDocument, openEm
     } catch (err) { setError(err.message) }
   }
 
+  async function downloadLetter(invoiceNumber) {
+    setError('')
+    try {
+      const url = `/api/actions/generate-letter-pdf${invoiceNumber ? `?invoice_number=${encodeURIComponent(invoiceNumber)}` : ''}`
+      const response = await apiFetch(url)
+      if (!response.ok) {
+        const body = await response.json()
+        throw new Error(typeof body.detail === 'string' ? body.detail : `Failed to generate letter (${response.status})`)
+      }
+      const blob = await response.blob()
+      const downloadUrl = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = downloadUrl
+      link.download = `Audit_Discrepancy_Notice_${invoiceNumber || 'Record'}.pdf`
+      link.click()
+      window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000)
+    } catch (err) { setError(err.message) }
+  }
+
   async function uploadDocuments() {
     setUploading(true); setError(''); setNotice('')
     for (let index = 0; index < uploadFiles.length; index += 1) {
@@ -211,7 +221,7 @@ export default function CompanyWorkspace({ page, navigate, onAskDocument, openEm
         : !summary?.completed_check_count ? ['Choose records and run your checks', 'checks']
           : summary.open_findings ? ['Review the items that need attention', 'checks']
             : ['Prepare your report', 'reports']
-  const titles = { overview: 'Overview', documents: 'My Documents', transactions: 'Transactions', checks: 'Financial Checks', reports: 'Reports', settings: 'Company Settings' }
+  const titles = { overview: 'Overview', documents: 'My Documents', transactions: 'Transactions', checks: 'Financial Checks', reports: 'Reports', reconciliation: 'Reconciliation', settings: 'Company Settings' }
   const chooseCheck = <label className="company-select">Financial review<select disabled={working} value={selectedId} onChange={(event) => { setSelectedId(event.target.value); setSelectedInvoices([]) }}><option value="">Select a review</option>{summary?.engagements.map((item) => <option key={item.engagement_id} value={item.engagement_id}>{item.entity_name} · {item.period_start} to {item.period_end}</option>)}</select></label>
 
   return <div className="company-content">
@@ -236,7 +246,7 @@ export default function CompanyWorkspace({ page, navigate, onAskDocument, openEm
 
       {page === 'documents' && <section className="company-panel"><div className="company-section-heading"><div><h2>Your documents</h2><p>Upload invoices, receipts and other financial records to your company.</p></div><Button disabled={uploading} onClick={() => uploadRef.current?.click()}>Choose Documents</Button><input ref={uploadRef} hidden type="file" multiple accept=".pdf,.png,.jpg,.jpeg,.webp,.tif,.tiff,.txt,.xlsx,.xlsm,.wav,.mp3,.ogg,.flac,.aiff,.aif" onChange={(event) => { const files = Array.from(event.target.files || []); event.target.value = ''; if (files.length) setUploadFiles(files.map((file) => ({ file, status: 'Ready', error: '' }))) }} /></div>
         {uploadFiles.length > 0 && <div className="company-upload-list"><strong>Selected documents</strong>{uploadFiles.map((item, index) => <p key={`${item.file.name}-${index}`}>{item.file.name} — {item.status}{item.error && <span role="alert">: {item.error}</span>}</p>)}<div className="company-actions">{uploadFiles.every((item) => item.status === 'Ready') && <Button disabled={uploading} onClick={uploadDocuments}>Confirm upload</Button>}<Button secondary disabled={uploading} onClick={() => setUploadFiles([])}>Clear list</Button></div></div>}
-        <p className="company-note">Showing up to 100 of {documents.total} saved documents. Uploads do not start a conversation.</p>
+        <p className="company-note">Showing up to 100 of {documents.total} saved documents.</p>
         <div className="company-table-wrap"><table className="company-table"><thead><tr><th>Document</th><th>Uploaded</th><th>Processing</th><th>Actions</th></tr></thead><tbody>{documents.documents.map((file) => <tr key={file.file_id}><td>{file.file_name}</td><td>{date(file.uploaded_at)}</td><td>{{ pending: 'Queued', processing: 'Processing', processed: 'Extracted', failed: 'Failed' }[file.processing_status] || file.processing_status || 'Unknown'}</td><td><button className="company-link" onClick={() => downloadDocument(file.file_id, file.file_name)}>Download</button>{file.processing_status === 'processed' && <> · <button className="company-link" disabled={working} onClick={() => reviewDocument(file.file_id)}>Review extraction</button></>}{['pending', 'failed'].includes(file.processing_status) && <> · <button className="company-link" disabled={working} onClick={() => retryDocument(file.file_id)}>Retry processing</button></>} · <button className="company-link" onClick={() => onAskDocument(file)}>Ask AI</button></td></tr>)}</tbody></table>{!documents.documents.length && <p className="company-empty">No documents yet. Upload your first records to get started.</p>}</div>
         {documentReview && <div className="company-panel"><div className="company-section-heading"><h2>Review: {documentReview.document.file_name}</h2><Button secondary onClick={() => setDocumentReview(null)}>Close</Button></div>
           <Button secondary onClick={() => downloadDocument(documentReview.document.file_id, documentReview.document.file_name)}>Download original</Button>
@@ -250,14 +260,9 @@ export default function CompanyWorkspace({ page, navigate, onAskDocument, openEm
         </div>}
       </section>}
 
-      {page === 'transactions' && <>
-        <section className="company-panel"><div className="company-section-heading"><div><h2>Extracted invoice records</h2><p>Check that the information below matches your documents. Showing up to 500 records.</p></div><Button secondary onClick={() => navigate('documents')}>View documents</Button></div>
-          <div className="company-table-wrap"><table className="company-table"><thead><tr><th>Invoice</th><th>Supplier</th><th>Date</th><th>Amount</th><th>Source</th></tr></thead><tbody>{invoices.map((item) => <tr key={item.invoice_id}><td>{item.invoice_number || 'Not extracted'}</td><td>{item.seller_name || 'Not extracted'}</td><td>{item.invoice_date || 'Not extracted'}</td><td>{money(item.invoice_total, item.currency)}</td><td>{item.file_id ? <button className="company-link" onClick={() => downloadDocument(item.file_id, documents.documents.find((file) => file.file_id === item.file_id)?.file_name)}>Download source</button> : 'Not available'}</td></tr>)}</tbody></table>{!invoices.length && <p className="company-empty">No invoice information has been extracted yet.</p>}</div>
-        </section>
-        <section className="company-panel"><div className="company-section-heading"><div><h2>Match payments and invoices</h2><p>Compare records processed during the current server session. Matches are based on amount and need your review; this is not a complete bank reconciliation.</p></div><Button onClick={matchRecords} disabled={working}>{working ? 'Checking…' : 'Match available records'}</Button></div>
-          {patrol && (patrol.total_invoices_scanned + patrol.total_bank_transactions === 0 ? <p className="company-empty">No recent records are available for matching. Upload records or ask the assistant about them first.</p> : <><p>{patrol.matched_count} possible matches · {patrol.total_invoices_scanned} invoices and {patrol.total_bank_transactions} payment entries checked.</p>{patrol.anomalies.map((item) => <article className="company-issue" key={item.anomaly_id}><strong>{item.title}</strong><p>{item.description}</p><small>{item.recommended_action}</small></article>)}</>)}
-        </section>
-      </>}
+      {page === 'transactions' && <section className="company-panel"><div className="company-section-heading"><div><h2>Extracted invoice records</h2><p>Check that the information below matches your documents. Showing up to 500 records.</p></div><Button secondary onClick={() => navigate('documents')}>View documents</Button></div>
+        <div className="company-table-wrap"><table className="company-table"><thead><tr><th>Invoice</th><th>Supplier</th><th>Date</th><th>Amount</th><th>Source</th></tr></thead><tbody>{invoices.map((item) => <tr key={item.invoice_id}><td>{item.invoice_number || 'Not extracted'}</td><td>{item.seller_name || 'Not extracted'}</td><td>{item.invoice_date || 'Not extracted'}</td><td>{money(item.invoice_total, item.currency)}</td><td>{item.file_id ? <button className="company-link" onClick={() => downloadDocument(item.file_id, documents.documents.find((file) => file.file_id === item.file_id)?.file_name)}>Download source</button> : 'Not available'}</td></tr>)}</tbody></table>{!invoices.length && <p className="company-empty">No invoice information has been extracted yet.</p>}</div>
+      </section>}
 
       {page === 'checks' && <>
         <section className="company-panel"><div className="company-section-heading"><div><h2>Financial checks</h2><p>Choose a period, select invoice records, then run checks for duplicates, totals, tax and dates.</p></div><Button onClick={() => setShowCreate((current) => !current)}>{showCreate ? 'Cancel' : 'Start a review'}</Button></div>
@@ -283,7 +288,6 @@ export default function CompanyWorkspace({ page, navigate, onAskDocument, openEm
             </article>) : <p className="company-empty">{detail.runs.length ? 'No issues were recorded in this review.' : 'Run checks to see items that need attention.'}</p>}
             {detail.latest_results.some((item) => item.outcome === 'INSUFFICIENT EVIDENCE') && <p className="company-note">Some checks could not be completed because supporting information was unavailable. They are not counted as passed.</p>}
           </section>
-          <details className="company-advanced"><summary>Advanced review details</summary><AuditWorkspace page={advancedPage} role={profile.role} onOpenSearch={() => navigate('search')} /></details>
         </>}
       </>}
 
@@ -292,6 +296,165 @@ export default function CompanyWorkspace({ page, navigate, onAskDocument, openEm
         {detail && !detail.runs.length && <p className="company-empty">Run financial checks for this review before generating a report.</p>}
         {detail?.runs.length > 0 && <div className="company-report"><h2>{overview.company.business_name} — Financial review</h2><p>Period: {detail.engagement.period_start} to {detail.engagement.period_end} · Latest check: {date(detail.runs[0].created_at)}</p><p>{detail.invoices.length} invoice records · {detail.findings.length} recorded issues</p><p>Displayed results: {detail.latest_results.filter((item) => item.outcome === 'PASS').length} passed · {detail.latest_results.filter((item) => item.outcome === 'EXCEPTION').length} flagged · {detail.latest_results.filter((item) => item.outcome === 'INSUFFICIENT EVIDENCE').length} need more information</p><h3>Recorded issues</h3>{detail.findings.length ? detail.findings.map((item) => <article className="company-issue" key={item.finding_id}><strong>{item.title} — {item.status}</strong><p>{item.description}</p><small>Source: {documents.documents.find((file) => file.file_id === item.evidence_refs?.[0]?.file_id)?.file_name || 'See linked invoice record'}</small></article>) : <p>No issues were recorded. This does not mean every check could be completed.</p>}<p className="company-note">This report shows up to 5,000 results and 500 issues. Checks without enough information are not passes.</p></div>}
       </section>}
+
+      {page === 'reconciliation' && <>
+        <div className="reconciliation-hero">
+          <div className="reconciliation-pillars">
+            <div className="pillar-card">
+              <span className="pillar-icon">📦</span>
+              <strong>1. Purchase Orders</strong>
+              <small>Approved internal commitments, quantities, and agreed contracted unit rates.</small>
+            </div>
+            <div className="pillar-divider">⟷</div>
+            <div className="pillar-card">
+              <span className="pillar-icon">📄</span>
+              <strong>2. Vendor Invoices</strong>
+              <small>Billed liabilities, supplier GSTINs, tax breakdowns, and payment terms.</small>
+            </div>
+            <div className="pillar-divider">⟷</div>
+            <div className="pillar-card">
+              <span className="pillar-icon">🏦</span>
+              <strong>3. Bank Settlements</strong>
+              <small>Actual cash disbursements, clearing dates, and electronic UTR references.</small>
+            </div>
+          </div>
+        </div>
+
+        <section className="company-panel">
+          <div className="company-section-heading">
+            <div>
+              <h2>Reconciliation & Anomaly Patrol</h2>
+              <p>Cross-examine your purchase orders, invoices, and bank statements to detect duplicate billing, unbacked debits, and price variances.</p>
+            </div>
+            <Button onClick={matchRecords} disabled={working}>
+              {working ? 'Running patrol…' : 'Run Reconciliation Patrol'}
+            </Button>
+          </div>
+
+          {patrol && (
+            <>
+              <div className="company-metrics" style={{ marginTop: '16px' }}>
+                <section className="company-metric">
+                  <span>Invoices Scanned</span>
+                  <strong>{patrol.total_invoices_scanned}</strong>
+                  <small>Extracted AP Liabilities</small>
+                </section>
+                <section className="company-metric">
+                  <span>Bank Records Checked</span>
+                  <strong>{patrol.total_bank_transactions}</strong>
+                  <small>Cash & POS Settlements</small>
+                </section>
+                <section className="company-metric">
+                  <span>Reconciled Records</span>
+                  <strong style={{ color: '#16a34a' }}>{patrol.matched_count}</strong>
+                  <small>Exact & Verified Matches</small>
+                </section>
+                <section className="company-metric">
+                  <span>Flagged Discrepancies</span>
+                  <strong style={{ color: patrol.anomalies_detected > 0 ? '#dc2626' : 'inherit' }}>
+                    {patrol.anomalies_detected}
+                  </strong>
+                  <small>Requiring AI/Auditor Review</small>
+                </section>
+              </div>
+
+              {patrol.anomalies.length > 0 && (
+                <div style={{ marginTop: '24px' }}>
+                  <h3 style={{ fontSize: '15px', fontWeight: 600, marginBottom: '12px' }}>
+                    Flagged Discrepancies & AI Cascade Root-Cause Analysis
+                  </h3>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                    {patrol.anomalies.map((item) => (
+                      <article className="company-issue" key={item.anomaly_id} style={{ borderLeft: item.severity === 'high' ? '4px solid #dc2626' : '4px solid #f59e0b' }}>
+                        <div className="company-issue-heading" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <strong style={{ fontSize: '14px' }}>{item.title}</strong>
+                          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                            <span className={`severity-pill ${item.severity}`}>{item.severity.toUpperCase()}</span>
+                            <span className="cascade-tier-pill">{item.cascade_tier}</span>
+                          </div>
+                        </div>
+                        <p style={{ margin: '8px 0 6px', color: 'var(--text)' }}>{item.description}</p>
+                        
+                        {item.ai_root_cause && (
+                          <div className="ai-root-cause-box">
+                            <strong>🧠 AI Cascade Root-Cause Diagnosis:</strong>
+                            <p>{item.ai_root_cause}</p>
+                          </div>
+                        )}
+
+                        {item.proposal_action && (
+                          <div className="ai-proposal-box">
+                            <strong>⚖️ Auditor Compliance Action:</strong>
+                            <p>{item.proposal_action}</p>
+                          </div>
+                        )}
+
+                        <div style={{ display: 'flex', gap: '10px', marginTop: '12px' }}>
+                          <button className="company-link" onClick={() => downloadLetter(item.affected_ids?.[0])}>
+                            📄 Download Formal Dispute Letter (PDF)
+                          </button>
+                          <span>·</span>
+                          <button className="company-link" onClick={() => { onAskDocument({ file_name: item.affected_ids?.[0] || item.title }); navigate('search') }}>
+                            💬 Ask AI Assistant about this discrepancy
+                          </button>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {patrol.matched_pairs && patrol.matched_pairs.length > 0 && (
+                <div style={{ marginTop: '28px' }}>
+                  <h3 style={{ fontSize: '15px', fontWeight: 600, marginBottom: '12px' }}>
+                    Reconciled Records ({patrol.matched_pairs.length} Matched)
+                  </h3>
+                  <div className="company-table-wrap">
+                    <table className="company-table">
+                      <thead>
+                        <tr>
+                          <th>Invoice #</th>
+                          <th>Vendor / Beneficiary</th>
+                          <th>Invoice Date</th>
+                          <th>Invoiced</th>
+                          <th>Bank Debit</th>
+                          <th>Bank Date</th>
+                          <th>Reference / UTR</th>
+                          <th>Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {patrol.matched_pairs.map((pair, pIdx) => (
+                          <tr key={pair.match_id || pIdx}>
+                            <td><strong>{pair.invoice_number}</strong></td>
+                            <td>{pair.vendor}</td>
+                            <td>{pair.invoice_date}</td>
+                            <td>INR {pair.invoice_total.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                            <td>INR {pair.bank_debit.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                            <td>{pair.bank_date}</td>
+                            <td><code style={{ fontSize: '11px', background: 'var(--surface-raised)', padding: '2px 4px', borderRadius: '4px' }}>{pair.reference}</code></td>
+                            <td>
+                              <span style={{ color: pair.variance === 0 ? '#16a34a' : '#d97706', fontWeight: 600, fontSize: '12px' }}>
+                                {pair.match_status}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+
+          {!patrol && (
+            <p className="company-empty" style={{ margin: '20px 0' }}>
+              Click <strong>Run Reconciliation Patrol</strong> to audit and match purchase orders, invoices, and bank statements with the AI Cascade.
+            </p>
+          )}
+        </section>
+      </>}
 
       {page === 'settings' && <section className="company-panel"><h2>Company settings</h2><dl className="company-details"><div><dt>Company</dt><dd>{overview.company.business_name || 'Not available'}</dd></div><div><dt>Account</dt><dd>{profile.username || profile.email}</dd></div><div><dt>Company status</dt><dd>{overview.company.status || 'Not available'}</dd></div></dl><h3>Connected services</h3><p>Manage sources that can bring financial records into your workspace.</p><div className="company-actions"><Button secondary onClick={openEmail}>Manage email connection</Button><Button secondary onClick={openPos}>Manage point of sale</Button></div></section>}
     </>}
