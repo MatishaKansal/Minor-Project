@@ -38,6 +38,17 @@ def test_single_page_pdf_extracts_fields_and_provenance(tmp_path):
     assert amount.confidence is None
 
 
+def test_header_ocr_preserves_native_invoice_date_provenance_when_ocr_omits_date(tmp_path, monkeypatch):
+    path = tmp_path / "invoice.pdf"
+    write_pdf(path, ["Invoice Date: 15/09/2026\nDue Date: 30/09/2026\nTotal: INR 125.50"])
+    monkeypatch.setattr("backend.parsers.pdf_parser._ocr_first_pdf_page", lambda *_args: ("Invoice No: INV-1", 90.0))
+    result = parse_pdf(path)
+    assert result.invoice_date == "15/09/2026"
+    assert result.due_date == "30/09/2026"
+    source = next(item for item in result.provenance if item.field_name == "invoice_date")
+    assert source.source_text == "Invoice Date: 15/09/2026"
+
+
 def test_multi_page_pdf_preserves_page_aware_provenance(tmp_path):
     path = tmp_path / "multi-page.pdf"
     write_pdf(path, ["Invoice No: INV-2\nPage one", "Notes", "AMOUNT PAYABLE: EUR 48.00"])

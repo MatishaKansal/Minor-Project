@@ -52,6 +52,53 @@ def index_document(
     return len(chunks)
 
 
+def index_company_documents_on_question(business_id: str, client: Any) -> list[dict[str, str]]:
+    """Make processed company documents searchable only when a user asks a question."""
+    warnings: list[dict[str, str]] = []
+    start = 0
+    while True:
+        documents = (
+            client.table("source_file").select("file_id,file_name")
+            .eq("business_id", business_id).eq("processing_status", "processed")
+            .order("file_id").range(start, start + 99).execute().data
+        )
+        if not isinstance(documents, list):
+            raise RuntimeError("The database returned an invalid document list.")
+        if not documents:
+            break
+        for document in documents:
+            file_id = str(document["file_id"])
+            chunks = (
+                client.table(TABLE_NAME).select("source_file_id").eq("business_id", business_id)
+                .eq("source_file_id", file_id).limit(1).execute().data
+            )
+            if not isinstance(chunks, list):
+                raise RuntimeError("The database returned invalid document search data.")
+            if chunks:
+                continue
+            name = document.get("file_name") or "document"
+            invoices = (
+                client.table("invoice").select("invoice_id").eq("business_id", business_id)
+                .eq("file_id", file_id).limit(1).execute().data
+            )
+            if not invoices:
+                warnings.append({"file_name": name, "message": "No extracted record is available for document search."})
+                continue
+            extractions = (
+                client.table("invoice_extraction").select("raw_text").eq("invoice_id", invoices[0]["invoice_id"])
+                .order("processed_at", desc=True).limit(1).execute().data
+            )
+            text = extractions[0].get("raw_text") if extractions else None
+            if not isinstance(text, str) or not text.strip():
+                warnings.append({"file_name": name, "message": "No extracted text is available for document search."})
+                continue
+            index_document(text=text, business_id=business_id, source_file_id=file_id, file_name=name, client=client)
+        if len(documents) < 100:
+            break
+        start += 100
+    return warnings
+
+
 def index_existing_documents(client: Any | None = None) -> int:
     """Index the latest saved extraction for each invoice/source file."""
     from backend.database.supabase_repository import get_supabase_client

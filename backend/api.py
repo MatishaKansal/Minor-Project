@@ -2,6 +2,7 @@
 
 import json
 import logging
+import secrets
 import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -15,9 +16,9 @@ from backend.actions.agent_orchestrator import ActionProposal, evaluate_agentic_
 from backend.actions.email_drafter import EmailDraft
 from backend.actions.pdf_letter_generator import generate_audit_letter_pdf
 from backend.actions.reconciliation_patrol import PatrolDigest, run_reconciliation_patrol
-from backend.connectors.email_connector import EMAIL_CONNECTOR, ConnectorAuthorizePayload
+from backend.connectors.email_connector import EmailConnector, ConnectorAuthorizePayload
 from backend.connectors.pos_connector import (
-    POS_CONNECTOR,
+    POSConnector,
     BarcodeScanRequest,
     POSAuthorizePayload,
     POSBillPayload,
@@ -25,8 +26,9 @@ from backend.connectors.pos_connector import (
 from fastapi.responses import StreamingResponse
 
 from backend.audit.router import router as audit_router
-from backend.auth import AuthenticatedUser, get_current_user
-from backend.auth_router import admin_router, router as auth_router
+from backend.auth import AuthenticatedUser, require_roles
+from backend.auth_router import router as auth_router
+from backend.company_router import companies_router, company_router, platform_router
 from backend.cascade.service import CascadeDecisionMaker, evidence_to_cascade_dict
 from backend.parsers.bank_csv_parser import SUPPORTED_EXTENSIONS as BANK_CSV_EXTENSIONS
 from backend.rag.retriever import retrieve
@@ -38,10 +40,11 @@ MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 PERSISTABLE_EXTENSIONS = (ALL_SUPPORTED_EXTENSIONS - BANK_CSV_EXTENSIONS) | {".txt"}
 
 app = FastAPI(title="Financial Document Retrieval & Cascade Decision API", version="0.3.0")
-app = FastAPI(title="Financial Document Retrieval & Cascade Decision API", version="0.2.0")
 app.include_router(audit_router)
 app.include_router(auth_router)
-app.include_router(admin_router)
+app.include_router(companies_router)
+app.include_router(company_router)
+app.include_router(platform_router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -50,14 +53,28 @@ app.add_middleware(
     ],
     allow_credentials=False,
     allow_methods=["GET", "POST", "PATCH"],
-    allow_headers=["Authorization", "Content-Type"],
+    allow_headers=["Authorization", "Content-Type", "X-Business-ID"],
 )
 
 # Global Cascade Decision Maker instance
 DECISION_MAKER = CascadeDecisionMaker()
 
 # In-memory store for recent audit evidence & generated proposals (for approval and export)
-RECENT_AUDITS: Dict[str, Dict[str, Any]] = {}
+RECENT_AUDITS: Dict[str, Dict[str, Dict[str, Any]]] = {}
+EMAIL_CONNECTORS: Dict[str, EmailConnector] = {}
+POS_CONNECTORS: Dict[str, POSConnector] = {}
+
+
+def _email_connector(user: AuthenticatedUser) -> EmailConnector:
+    return EMAIL_CONNECTORS.setdefault(user.company_id(), EmailConnector())
+
+
+def _pos_connector(user: AuthenticatedUser) -> POSConnector:
+    return POS_CONNECTORS.setdefault(user.company_id(), POSConnector())
+
+
+def _recent_audits(user: AuthenticatedUser) -> Dict[str, Dict[str, Any]]:
+    return RECENT_AUDITS.setdefault(user.company_id(), {})
 
 
 def _event(event_type: str, **payload: Any) -> str:
@@ -83,7 +100,7 @@ class EmailApprovalRequest(BaseModel):
 
 
 @app.post("/api/actions/approve-email")
-def approve_and_send_email(request: EmailApprovalRequest) -> Dict[str, Any]:
+def approve_and_send_email(request: EmailApprovalRequest, user: AuthenticatedUser = Depends(require_roles("administrator"))) -> Dict[str, Any]:
     """
     Human-in-the-loop approval endpoint for vendor dispute emails.
     In production, connects to an SMTP/SES gateway or saves to Outbox.
@@ -98,15 +115,16 @@ def approve_and_send_email(request: EmailApprovalRequest) -> Dict[str, Any]:
 
 
 @app.get("/api/actions/generate-letter-pdf")
-def download_letter_pdf(invoice_number: Optional[str] = Query(None)) -> Response:
+def download_letter_pdf(invoice_number: Optional[str] = Query(None), user: AuthenticatedUser = Depends(require_roles("administrator"))) -> Response:
     """
     Generate and stream a formal audit notice PDF for a given invoice number or the latest audit.
     """
     audit_data = None
-    if invoice_number and invoice_number in RECENT_AUDITS:
-        audit_data = RECENT_AUDITS[invoice_number]
-    elif RECENT_AUDITS:
-        audit_data = list(RECENT_AUDITS.values())[-1]
+    recent_audits = _recent_audits(user)
+    if invoice_number and invoice_number in recent_audits:
+        audit_data = recent_audits[invoice_number]
+    elif recent_audits:
+        audit_data = list(recent_audits.values())[-1]
 
     if not audit_data:
         # Default placeholder notice if no audit has run yet
@@ -133,13 +151,13 @@ def download_letter_pdf(invoice_number: Optional[str] = Query(None)) -> Response
 
 
 @app.post("/api/actions/run-patrol")
-def run_patrol_scan() -> Dict[str, Any]:
+def run_patrol_scan(user: AuthenticatedUser = Depends(require_roles("administrator"))) -> Dict[str, Any]:
     """
     Execute proactive reconciliation and anomaly patrol across current memory records.
     """
     all_invoices = []
     all_payments = []
-    for record in RECENT_AUDITS.values():
+    for record in _recent_audits(user).values():
         ev = record.get("evidence", {})
         if ev.get("invoice"):
             all_invoices.append(ev["invoice"])
@@ -155,16 +173,16 @@ def run_patrol_scan() -> Dict[str, Any]:
 # -------------------------------------------------------------
 
 @app.get("/api/connectors/email/status")
-def get_email_connector_status() -> Dict[str, Any]:
+def get_email_connector_status(user: AuthenticatedUser = Depends(require_roles("administrator"))) -> Dict[str, Any]:
     """Returns the authorization status and metadata for the email connector."""
-    return EMAIL_CONNECTOR.get_status()
+    return _email_connector(user).get_status()
 
 
 @app.post("/api/connectors/email/authorize")
-def authorize_email_connector(payload: ConnectorAuthorizePayload) -> Dict[str, Any]:
+def authorize_email_connector(payload: ConnectorAuthorizePayload, user: AuthenticatedUser = Depends(require_roles("administrator"))) -> Dict[str, Any]:
     """Authorizes the email connector using live IMAP credentials or demo mailbox."""
     try:
-        result = EMAIL_CONNECTOR.authorize(payload)
+        result = _email_connector(user).authorize(payload)
         return result
     except ConnectionError as exc:
         raise HTTPException(status_code=401, detail=str(exc))
@@ -175,9 +193,9 @@ def authorize_email_connector(payload: ConnectorAuthorizePayload) -> Dict[str, A
 
 
 @app.post("/api/connectors/email/revoke")
-def revoke_email_connector() -> Dict[str, Any]:
+def revoke_email_connector(user: AuthenticatedUser = Depends(require_roles("administrator"))) -> Dict[str, Any]:
     """Revokes email connector authorization and clears session credentials."""
-    return EMAIL_CONNECTOR.revoke()
+    return _email_connector(user).revoke()
 
 
 class EmailSyncRequest(BaseModel):
@@ -186,23 +204,26 @@ class EmailSyncRequest(BaseModel):
 
 
 @app.post("/api/connectors/email/sync")
-def sync_email_inbox(request: Optional[EmailSyncRequest] = None) -> Dict[str, Any]:
+def sync_email_inbox(request: Optional[EmailSyncRequest] = None, user: AuthenticatedUser = Depends(require_roles("administrator"))) -> Dict[str, Any]:
     """Polls the authorized email inbox/demo mailbox and ingests new invoices."""
-    if not EMAIL_CONNECTOR.is_authorized:
+    connector = _email_connector(user)
+    if not connector.is_authorized:
         raise HTTPException(
             status_code=403,
             detail="Email Connector is not authorized. Please authorize via the dashboard modal first."
         )
     try:
-        b_id = request.business_id if request else None
+        if request and request.business_id and request.business_id != user.business_id:
+            raise HTTPException(status_code=403, detail="The requested business is not active.")
+        b_id = user.business_id
         m_items = request.max_items if request else 2
-        result = EMAIL_CONNECTOR.sync(business_id=b_id, max_items=m_items)
+        result = connector.sync(business_id=b_id, max_items=m_items)
 
         # Store generated proposals in RECENT_AUDITS for downstream letter generation
         for item in result.get("items", []):
             inv_no = item.get("invoice_number")
             if inv_no:
-                RECENT_AUDITS[inv_no] = {
+                _recent_audits(user)[inv_no] = {
                     "query": f"Automated email ingestion audit for invoice {inv_no}",
                     "answer": f"Ingested {inv_no} from email sender {item.get('sender')}. Status: Ingested & Indexed.",
                     "evidence": {"invoice": {"invoice_number": inv_no, "vendor_name": item.get("vendor_name"), "amount": item.get("amount")}},
@@ -211,6 +232,8 @@ def sync_email_inbox(request: Optional[EmailSyncRequest] = None) -> Dict[str, An
                 }
 
         return result
+    except HTTPException:
+        raise
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc))
     except ConnectionError as exc:
@@ -225,48 +248,51 @@ def sync_email_inbox(request: Optional[EmailSyncRequest] = None) -> Dict[str, An
 # -------------------------------------------------------------
 
 @app.get("/api/connectors/pos/status")
-def get_pos_connector_status() -> Dict[str, Any]:
+def get_pos_connector_status(user: AuthenticatedUser = Depends(require_roles("administrator"))) -> Dict[str, Any]:
     """Returns the authorization status, store metadata, and catalog for the POS connector."""
-    return POS_CONNECTOR.get_status()
+    return _pos_connector(user).get_status()
 
 
 @app.post("/api/connectors/pos/authorize")
-def authorize_pos_connector(payload: POSAuthorizePayload) -> Dict[str, Any]:
+def authorize_pos_connector(payload: POSAuthorizePayload, user: AuthenticatedUser = Depends(require_roles("administrator"))) -> Dict[str, Any]:
     """Authorizes POS connector, creates session API key for webhook integration."""
     try:
-        return POS_CONNECTOR.authorize(payload)
+        return _pos_connector(user).authorize(payload)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to authorize POS connector: {exc}")
 
 
 @app.post("/api/connectors/pos/revoke")
-def revoke_pos_connector() -> Dict[str, Any]:
+def revoke_pos_connector(user: AuthenticatedUser = Depends(require_roles("administrator"))) -> Dict[str, Any]:
     """Revokes POS connector access and invalidates session token."""
-    return POS_CONNECTOR.revoke()
+    return _pos_connector(user).revoke()
 
 
 @app.post("/api/connectors/pos/scan")
-def scan_pos_barcode(request: BarcodeScanRequest) -> Dict[str, Any]:
+def scan_pos_barcode(request: BarcodeScanRequest, user: AuthenticatedUser = Depends(require_roles("administrator"))) -> Dict[str, Any]:
     """Simulates an interactive checkout barcode scan and immediately generates a POS bill."""
-    if not POS_CONNECTOR.is_authorized:
+    connector = _pos_connector(user)
+    if request.business_id and request.business_id != user.business_id:
+        raise HTTPException(status_code=403, detail="The requested business is not active.")
+    if not connector.is_authorized:
         raise HTTPException(
             status_code=403,
             detail="POS Connector is not authorized. Please authorize via the dashboard modal first."
         )
     try:
-        result = POS_CONNECTOR.scan_barcode(
+        result = connector.scan_barcode(
             barcode=request.barcode,
             quantity=request.quantity,
             payment_method=request.payment_method,
-            business_id=request.business_id,
+            business_id=user.business_id,
         )
         # Store in RECENT_AUDITS for downstream letter/dispute generation
         bill_no = result.get("bill_number")
         if bill_no:
-            RECENT_AUDITS[bill_no] = {
+            _recent_audits(user)[bill_no] = {
                 "query": f"POS Retail Checkout Audit for bill {bill_no}",
                 "answer": f"Ingested POS Bill {bill_no} for INR {result.get('grand_total')}. File: {result.get('file_name')}",
-                "evidence": {"invoice": {"invoice_number": bill_no, "vendor_name": POS_CONNECTOR.store_name, "amount": result.get("grand_total")}},
+                "evidence": {"invoice": {"invoice_number": bill_no, "vendor_name": connector.store_name, "amount": result.get("grand_total")}},
                 "stopped_tier": "layer_1",
                 "proposals": result.get("proposals", []),
             }
@@ -284,17 +310,20 @@ class POSBatchSyncRequest(BaseModel):
 
 
 @app.post("/api/connectors/pos/sync-batch")
-def sync_pos_batch_register(request: Optional[POSBatchSyncRequest] = None) -> Dict[str, Any]:
+def sync_pos_batch_register(request: Optional[POSBatchSyncRequest] = None, user: AuthenticatedUser = Depends(require_roles("administrator"))) -> Dict[str, Any]:
     """Synchronizes a batch of sales bills from the daily register and runs reconciliation patrol."""
-    if not POS_CONNECTOR.is_authorized:
+    connector = _pos_connector(user)
+    if request and request.business_id and request.business_id != user.business_id:
+        raise HTTPException(status_code=403, detail="The requested business is not active.")
+    if not connector.is_authorized:
         raise HTTPException(
             status_code=403,
             detail="POS Connector is not authorized. Please authorize via the dashboard modal first."
         )
     try:
-        b_id = request.business_id if request else None
+        b_id = user.business_id
         b_size = request.batch_size if request else 3
-        return POS_CONNECTOR.sync_batch_register(business_id=b_id, batch_size=b_size)
+        return connector.sync_batch_register(business_id=b_id, batch_size=b_size)
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc))
     except Exception as exc:
@@ -308,13 +337,19 @@ def receive_pos_webhook(
     x_pos_api_key: Optional[str] = Header(None, alias="X-POS-API-KEY"),
 ) -> Dict[str, Any]:
     """Real-world POS webhook endpoint (Option A) for Vyapar, Tally, Zoho Books, and barcode registers."""
-    if not POS_CONNECTOR.is_authorized:
-        raise HTTPException(status_code=403, detail="POS Connector is not authorized in this system.")
-    if POS_CONNECTOR.api_key and x_pos_api_key != POS_CONNECTOR.api_key:
+    if not x_pos_api_key:
+        raise HTTPException(status_code=401, detail="A POS API key is required.")
+    match = next(
+        ((business_id, connector) for business_id, connector in POS_CONNECTORS.items()
+         if connector.is_authorized and connector.api_key and secrets.compare_digest(x_pos_api_key, connector.api_key)),
+        None,
+    )
+    if not match:
         raise HTTPException(status_code=401, detail="Invalid X-POS-API-KEY header token.")
+    business_id, connector = match
 
     try:
-        return POS_CONNECTOR.process_incoming_bill(bill)
+        return connector.process_incoming_bill(bill, business_id=business_id)
     except Exception as exc:
         LOGGER.exception("POS webhook ingestion failed: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
@@ -325,7 +360,7 @@ async def query_documents(
     question: str = Form(...),
     files: list[UploadFile] | None = File(default=None),
     business_id: str | None = Form(default=None),
-    current_user: AuthenticatedUser = Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(require_roles("administrator")),
 ) -> StreamingResponse:
     """Persist uploaded files, retrieve relevant chunks, execute the 4-tier LLM cascade decision maker, and synthesize agentic action proposals."""
     clean_question = question.strip()
@@ -334,9 +369,6 @@ async def query_documents(
             iter([_event("error", message="Please enter a question.")]),
             media_type="text/event-stream",
         )
-
-    if files and current_user.role not in {"administrator", "auditor"}:
-        raise HTTPException(status_code=403, detail="Only auditors and administrators can upload evidence.")
 
     upload_payloads: list[tuple[str, bytes]] = []
     unsupported_uploads: list[str] = []
@@ -440,17 +472,24 @@ async def query_documents(
         retrieved_chunks = []
         try:
             from backend.database.supabase_repository import get_supabase_client
+            from backend.rag.indexer import index_company_documents_on_question
 
             client = get_supabase_client()
+            try:
+                file_warnings.extend(index_company_documents_on_question(current_user.company_id(), client))
+            except Exception:
+                LOGGER.exception("Could not prepare all company documents for search.")
+                file_warnings.append({"file_name": "Document search", "message": "Some saved documents could not be prepared for search. Check the backend logs."})
             retrieved_chunks = retrieve(
                 clean_question,
-                current_user.business_id,
+                current_user.company_id(),
                 match_count=5,
                 min_similarity=0.35,
                 client=client,
             )
         except Exception as exc:
-            LOGGER.warning("Document retrieval bypassed or failed: %s", exc)
+            LOGGER.exception("Document search failed.")
+            file_warnings.append({"file_name": "Document search", "message": "Search could not be completed. Check the backend logs."})
 
         yield _event("status", message="Evaluating evidence through the 4-tier LLM cascade decision maker…")
         try:
@@ -481,8 +520,9 @@ async def query_documents(
             )
 
             # Save in memory for PDF download and email execution
-            inv_no = (cascade_evidence.get("invoice") or {}).get("invoice_number") or f"audit_{len(RECENT_AUDITS)+1}"
-            RECENT_AUDITS[inv_no] = {
+            recent_audits = _recent_audits(current_user)
+            inv_no = (cascade_evidence.get("invoice") or {}).get("invoice_number") or f"audit_{len(recent_audits)+1}"
+            recent_audits[inv_no] = {
                 "query": clean_question,
                 "answer": ai_answer,
                 "evidence": cascade_evidence,

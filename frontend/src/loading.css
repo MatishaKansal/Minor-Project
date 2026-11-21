@@ -1,0 +1,42 @@
+.ledger-loading {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  min-height: 100dvh;
+  place-items: center;
+  overflow: hidden;
+  padding: 40px 24px;
+  isolation: isolate;
+  background: radial-gradient(ellipse at 50% 30%, #f9fbff 0, #f1f6ff 55%, #e4efff 100%);
+  color: #0c1d47;
+  text-align: center;
+}
+.ledger-loading::before, .ledger-loading::after {
+  position: absolute;
+  z-index: -1;
+  bottom: -180px;
+  width: 120%;
+  height: 250px;
+  border-radius: 50%;
+  background: #d7e7ff;
+  content: '';
+}
+.ledger-loading::before { left: -45%; transform: rotate(12deg); opacity: .6; }
+.ledger-loading::after { right: -40%; transform: rotate(-12deg); opacity: .8; }
+.ledger-loading-content { display: flex; width: min(100%, 340px); align-items: center; flex-direction: column; }
+.ledger-loading-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 34px; color: #0c1d47; font-family: Georgia, serif; font-size: clamp(30px, 5vw, 38px); font-weight: 700; letter-spacing: -.8px; }
+.ledger-loading-brand-icon { display: grid; width: 50px; height: 50px; place-items: center; border-radius: 12px; background: linear-gradient(145deg, #4071b8, #2e5ca9); color: #fff; }
+.ledger-loading-brand-icon svg { width: 34px; height: 34px; }
+.ledger-loading-greeting { display: grid; width: 78px; height: 78px; place-items: center; margin-bottom: 20px; border-radius: 20px; background: #e4efff; color: #2e5bbb; }
+.ledger-loading-greeting svg { width: 46px; height: 46px; }
+.ledger-loading .ledger-loading-title { margin: 0 0 10px; color: #0c1d47; font-family: 'Segoe UI', system-ui, sans-serif; font-size: clamp(27px, 4vw, 32px); font-weight: 700; line-height: 1.2; letter-spacing: -.5px; }
+.ledger-loading .ledger-loading-message { margin: 0; color: #33486f; font-size: 19px; line-height: 1.5; }
+.ledger-loading-track { width: min(100%, 310px); height: 10px; margin-top: 28px; overflow: hidden; border-radius: 999px; background: #c9dcfa; }
+.ledger-loading-indicator { display: block; width: 46%; height: 100%; border-radius: inherit; background: #315eb9; animation: ledger-loading-slide 1.4s ease-in-out infinite alternate; }
+@keyframes ledger-loading-slide {
+  from { transform: translateX(0); }
+  to { transform: translateX(117%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ledger-loading-indicator { animation: none; }
+}

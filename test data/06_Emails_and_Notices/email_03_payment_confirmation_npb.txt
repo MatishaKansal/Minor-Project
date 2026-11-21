@@ -1,0 +1,12 @@
+From: receivables@navneetpaper.in
+To: accounts@apexstationery.in
+Date: 07-Oct-2026 11:05 AM
+Subject: Payment Received - Invoice INV-NPB-2026-041
+
+Dear Team,
+
+This confirms full receipt of INR 44,800.00 via NEFT (UTR26100600142) towards Invoice INV-NPB-2026-041 (PO-2026-101). Your account for this invoice is settled with zero balance.
+
+Thanks,
+Navneet Paper & Boards Distributors
+GSTIN: 04AABCN7392M1Z2

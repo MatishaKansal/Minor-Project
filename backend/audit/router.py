@@ -19,7 +19,7 @@ from backend.auth import (
 
 LOGGER = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/audit", tags=["audit"])
+router = APIRouter(prefix="/api/audit", tags=["audit"], dependencies=[Depends(require_roles("administrator"))])
 
 
 class EngagementCreate(BaseModel):
@@ -61,7 +61,7 @@ class EngagementStatusUpdate(BaseModel):
 
 
 def _client_and_business(user: AuthenticatedUser) -> tuple[Any, str]:
-    return get_authenticated_database_client(), user.business_id
+    return get_authenticated_database_client(), user.company_id()
 
 
 def _log_event(
@@ -83,14 +83,14 @@ def _log_event(
 
 
 @router.get("/engagements")
-def list_engagements(user: AuthenticatedUser = Depends(require_roles("administrator", "auditor", "reviewer", "read_only_viewer"))) -> dict[str, Any]:
+def list_engagements(user: AuthenticatedUser = Depends(get_current_user)) -> dict[str, Any]:
     client, active_business = _client_and_business(user)
     rows = client.table("audit_engagement").select("*").eq("business_id", active_business).order("created_at", desc=True).execute().data or []
     return {"engagements": rows}
 
 
 @router.get("/summary")
-def audit_summary(user: AuthenticatedUser = Depends(require_roles("administrator", "auditor", "reviewer", "read_only_viewer"))) -> dict[str, Any]:
+def audit_summary(user: AuthenticatedUser = Depends(get_current_user)) -> dict[str, Any]:
     client, active_business = _client_and_business(user)
     engagements = client.table("audit_engagement").select(
         "engagement_id,entity_name,period_start,period_end,status,materiality_threshold,reporting_currency"
@@ -104,6 +104,7 @@ def audit_summary(user: AuthenticatedUser = Depends(require_roles("administrator
             "transaction_value_complete": True,
             "transaction_currency": "INR",
             "tested_transaction_count": 0,
+            "completed_check_count": 0,
             "coverage_percent": 0,
             "open_findings": 0,
             "high_risk_findings": 0,
@@ -131,6 +132,17 @@ def audit_summary(user: AuthenticatedUser = Depends(require_roles("administrator
     ).in_("engagement_id", engagement_ids).order("created_at", desc=True).limit(20).execute().data or []
 
     tested_ids = {row["invoice_id"] for row in results}
+    completed_checks = client.table("audit_test_result").select(
+        "invoice_id", count="exact"
+    ).in_("engagement_id", engagement_ids).in_("outcome", ["PASS", "EXCEPTION"]).limit(1).execute().count
+    if completed_checks is None:
+        raise HTTPException(status_code=502, detail="Could not count completed financial checks.")
+    open_statuses = {"Open", "Under Review", "Confirmed"}
+    open_findings_count = client.table("audit_finding").select(
+        "finding_id", count="exact"
+    ).in_("engagement_id", engagement_ids).in_("status", sorted(open_statuses)).limit(1).execute().count
+    if open_findings_count is None:
+        raise HTTPException(status_code=502, detail="Could not count financial issues.")
     total_linked = len({row["invoice_id"] for row in links})
     amounts = [_decimal_amount(row.get("invoice_total")) for row in invoices]
     available_amounts = [value for value in amounts if value is not None]
@@ -145,7 +157,6 @@ def audit_summary(user: AuthenticatedUser = Depends(require_roles("administrator
         and len(currencies) == 1
         and "" not in currencies
     )
-    open_statuses = {"Open", "Under Review", "Confirmed"}
     return {
         "engagement_count": len(engagements),
         "active_engagement_count": sum(row["status"] in {"Planning", "In Progress", "Under Review"} for row in engagements),
@@ -154,8 +165,9 @@ def audit_summary(user: AuthenticatedUser = Depends(require_roles("administrator
         "transaction_value_complete": value_complete,
         "transaction_currency": next(iter(currencies)) if len(currencies) == 1 and "" not in currencies else None,
         "tested_transaction_count": len(tested_ids),
+        "completed_check_count": int(completed_checks),
         "coverage_percent": round(len(tested_ids) * 100 / total_linked) if total_linked else 0,
-        "open_findings": sum(row["status"] in open_statuses for row in all_findings),
+        "open_findings": int(open_findings_count),
         "high_risk_findings": sum(row["severity"] in {"High", "Critical"} and row["status"] in open_statuses for row in all_findings),
         "recent_findings": findings,
         "engagements": engagements,
@@ -165,7 +177,7 @@ def audit_summary(user: AuthenticatedUser = Depends(require_roles("administrator
 @router.post("/engagements", status_code=201)
 def create_engagement(
     payload: EngagementCreate,
-    user: AuthenticatedUser = Depends(require_roles("administrator", "auditor")),
+    user: AuthenticatedUser = Depends(get_current_user),
 ) -> dict[str, Any]:
     client, active_business = _client_and_business(user)
     row = payload.model_dump(mode="json")
@@ -186,13 +198,6 @@ def update_engagement_status(
     payload: EngagementStatusUpdate,
     user: AuthenticatedUser = Depends(get_current_user),
 ) -> dict[str, Any]:
-    if payload.status == "Completed" and user.role not in {"administrator", "reviewer"}:
-        raise HTTPException(status_code=403, detail="Only a reviewer or administrator can approve engagement completion.")
-    if payload.status == "Archived" and user.role != "administrator":
-        raise HTTPException(status_code=403, detail="Only an administrator can archive a completed engagement.")
-    if payload.status not in {"Completed", "Archived"} and user.role not in {"administrator", "auditor"}:
-        raise HTTPException(status_code=403, detail="Only an auditor or administrator can change this engagement status.")
-
     client, active_business = _client_and_business(user)
     engagement_id_str = str(engagement_id)
     rows = client.table("audit_engagement").select(
@@ -232,7 +237,7 @@ def update_engagement_status(
 
 @router.get("/invoices")
 def list_invoices(
-    user: AuthenticatedUser = Depends(require_roles("administrator", "auditor", "reviewer", "read_only_viewer")),
+    user: AuthenticatedUser = Depends(get_current_user),
 ) -> dict[str, Any]:
     client, active_business = _client_and_business(user)
     rows = client.table("invoice").select(
@@ -244,7 +249,7 @@ def list_invoices(
 @router.get("/engagements/{engagement_id}")
 def get_engagement(
     engagement_id: UUID,
-    user: AuthenticatedUser = Depends(require_roles("administrator", "auditor", "reviewer", "read_only_viewer")),
+    user: AuthenticatedUser = Depends(get_current_user),
 ) -> dict[str, Any]:
     client, active_business = _client_and_business(user)
     engagement_rows = client.table("audit_engagement").select("*").eq("engagement_id", str(engagement_id)).eq("business_id", active_business).limit(1).execute().data or []
@@ -271,7 +276,7 @@ def get_engagement(
 def link_transactions(
     engagement_id: UUID,
     payload: TransactionLink,
-    user: AuthenticatedUser = Depends(require_roles("administrator", "auditor")),
+    user: AuthenticatedUser = Depends(get_current_user),
 ) -> dict[str, Any]:
     client, active_business = _client_and_business(user)
     engagement_id_str = str(engagement_id)
@@ -295,7 +300,7 @@ def link_transactions(
 @router.post("/engagements/{engagement_id}/run", status_code=201)
 def execute_audit(
     engagement_id: UUID,
-    user: AuthenticatedUser = Depends(require_roles("administrator", "auditor")),
+    user: AuthenticatedUser = Depends(get_current_user),
 ) -> dict[str, Any]:
     client, active_business = _client_and_business(user)
     engagement_id_str = str(engagement_id)
@@ -396,11 +401,6 @@ def decide_finding(
     payload: FindingDecision,
     user: AuthenticatedUser = Depends(get_current_user),
 ) -> dict[str, Any]:
-    if payload.status in {"Confirmed", "False Positive", "Closed"} and user.role not in {"administrator", "reviewer"}:
-        raise HTTPException(status_code=403, detail="Only a reviewer or administrator can make this finding decision.")
-    if payload.status in {"Under Review", "Resolved"} and user.role not in {"administrator", "auditor", "reviewer"}:
-        raise HTTPException(status_code=403, detail="Your audit role cannot change this finding status.")
-
     client, active_business = _client_and_business(user)
     rows = client.table("audit_finding").select("*").eq("finding_id", str(finding_id)).limit(1).execute().data or []
     if not rows:

@@ -111,6 +111,35 @@ _ANY_DATE_LABEL = re.compile(
     r"(?:date|dated|dt\.?)\s*[:\-]?\s*$|(?:date|dated)\s+of\s+",
     re.IGNORECASE,
 )
+_DUE_DATE_LABEL = re.compile(r"\b(?:due\s+date|payment\s+due)\b", re.IGNORECASE)
+_GENERIC_DATE_LABEL = re.compile(r"^\s*(?:date|dated|dt\.?)\s*[:\-]?\s*", re.IGNORECASE)
+
+
+def _extract_labeled_invoice_date(
+    lines: list[DocumentLine], *, due: bool = False
+) -> tuple[str | None, FieldSource | None]:
+    for index, (_, _, _, clean) in enumerate(lines):
+        label = _DUE_DATE_LABEL.search(clean) if due else _ISSUE_DATE_LABELS.search(clean)
+        if not due and not label and not _DUE_DATE_LABEL.search(clean):
+            label = _GENERIC_DATE_LABEL.search(clean)
+        if not label:
+            continue
+        remainder = clean[label.end():]
+        next_label = _DUE_DATE_LABEL.search(remainder) if not due else _ISSUE_DATE_LABELS.search(remainder)
+        if next_label:
+            remainder = remainder[:next_label.start()]
+        candidates = [(index, remainder)]
+        if index + 1 < len(lines) and not remainder.strip(" :.-"):
+            following = lines[index + 1][3]
+            if not (_DUE_DATE_LABEL.search(following) or _ISSUE_DATE_LABELS.search(following)):
+                candidates.append((index + 1, following))
+        for source_index, text in candidates:
+            for pattern in _DATE_PATTERNS:
+                match = re.search(pattern, _fix_ocr_date(text), re.IGNORECASE)
+                if match:
+                    pno, lno, raw, _ = lines[source_index]
+                    return match.group(1).strip(), FieldSource(pno, lno, raw)
+    return None, None
 
 
 def _extract_date(lines: list[DocumentLine]) -> tuple[str | None, FieldSource | None]:
@@ -973,6 +1002,7 @@ def extract_financial_fields(input_data: str | list[tuple[int, str]]) -> dict[st
     lines = to_document_lines(input_data)
 
     date, date_source = _extract_date(lines)
+    invoice_date, invoice_date_source = _extract_labeled_invoice_date(lines)
     amount, amount_source, amount_method = extract_final_amount(lines)
     currency, currency_source = _extract_currency(lines, amount_source=amount_source)
     invoice_number, invoice_source = _extract_document_number(lines)
@@ -1043,20 +1073,7 @@ def extract_financial_fields(input_data: str | list[tuple[int, str]]) -> dict[st
         amount = None
         amount_source = None
 
-    due_date = None
-    for pno, lno, raw_line, clean in lines:
-        if re.search(r"\b(?:due\s+date|payment\s+due)\b", clean, re.IGNORECASE):
-            date_match = re.search(r"\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{4}-\d{2}-\d{2}", clean)
-            if date_match:
-                due_date = date_match.group(0)
-            else:
-                index = lines.index((pno, lno, raw_line, clean))
-                if index + 1 < len(lines):
-                    next_match = re.search(r"\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{4}-\d{2}-\d{2}", lines[index + 1][3])
-                    if next_match:
-                        due_date = next_match.group(0)
-            if due_date:
-                break
+    due_date, due_date_source = _extract_labeled_invoice_date(lines, due=True)
 
     invoice_type = None
     for label, value in ((r"\bcredit\s+note\b", "credit_note"), (r"\bdebit\s+note\b", "debit_note"), (r"\bbill\s+of\s+supply\b", "bill_of_supply"), (r"\btax\s+invoice\b", "tax_invoice"), (r"\binvoice\b", "invoice")):
@@ -1088,7 +1105,7 @@ def extract_financial_fields(input_data: str | list[tuple[int, str]]) -> dict[st
             buyer_gstin = buyer_gstin or _gstin_value(gstin_matches[1])
 
     fields.update({
-        "invoice_date": date,
+        "invoice_date": invoice_date,
         "due_date": due_date,
         "invoice_type": invoice_type,
         "seller_name": party_name,
@@ -1197,15 +1214,15 @@ def extract_financial_fields(input_data: str | list[tuple[int, str]]) -> dict[st
         value = fields.get(field_name)
         if value is None:
             continue
-        source = None
-        for pno, lno, raw_line, clean in lines:
-            if str(value).casefold() in clean.casefold():
-                source = FieldSource(pno, lno, raw_line)
-                break
+        source = invoice_date_source if field_name == "invoice_date" else due_date_source if field_name == "due_date" else None
+        if source is None and field_name not in {"invoice_date", "due_date"}:
+            for pno, lno, raw_line, clean in lines:
+                if str(value).casefold() in clean.casefold():
+                    source = FieldSource(pno, lno, raw_line)
+                    break
         if source is None:
-            # Derived aliases such as invoice_date and PAN-from-GSTIN retain the
-            # source location of the originating field.
-            source = date_source if field_name == "invoice_date" else party_source if field_name == "seller_name" else None
+            # Derived seller names retain the source location of the originating field.
+            source = party_source if field_name == "seller_name" else None
         if source:
             provenance.append({
                 "field_name": field_name,

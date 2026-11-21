@@ -42,6 +42,8 @@ python -c "from backend.parsers.pdf_parser import parse_pdf; print(parse_pdf('da
 
 PDF results use the same `Evidence` schema as images. Provenance retains the original PDF line, page number, line number, and deterministic extraction method. PDFs can be persisted with `persist_to_database=True`; invoice rows are written to the invoice schema and business resolution is reused.
 
+Invoice and due dates are extracted separately from labeled fields. Supported complete dates are normalized to `YYYY-MM-DD` for storage; missing, invalid, and yearless dates remain null. The extraction record and field provenance retain the original text.
+
 Example output:
 
 ```json
@@ -76,6 +78,33 @@ python tests/run_image_parser.py
 The runner processes PNG, JPG/JPEG, WEBP, and TIFF files with the default OCR-only parser settings. It prints each image's status, OCR confidence, deterministic financial fields, and full extracted OCR text. It does not use database persistence or modify Supabase.
 
 To print provenance for each extracted field, the same runner displays the raw OCR source line, line number, extraction method, and confidence after each successful result.
+
+### Evaluate labelled images
+
+Run the image-only evaluation against `dataset/img/image_ground_truth.csv`:
+
+```powershell
+python tests/evaluate_image_dataset.py
+```
+
+The six labels were visually transcribed from the images without consulting
+the PDFs or parser output; they have not been independently reviewed by a
+second annotator. The evaluator checks image hashes and reports exact
+invoice-number matches, day-first date matches after format normalization,
+and numeric amount matches, including missing or incorrect fields in the
+denominator. Parser failures are reported and make the command fail.
+
+This is a small convenience sample, not a representative accuracy estimate.
+Three labelled `INVTEST` images are synthetic and currently untracked; they
+must be retained for this evaluation. The original images were rendered from
+PDFs, so scores for the two modalities must be reported separately and are
+not independent-document results. Add separately sourced images and have
+their labels independently reviewed before making broader claims.
+
+Text evidence also exposes `sender`, the email address from a single valid
+initial `From` header, with field provenance. It is separate from `party_name`
+and does not authenticate the sender. Messages without an unambiguous email
+address have a null sender.
 
 ## Persist OCR results to Supabase
 

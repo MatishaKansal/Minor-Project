@@ -52,6 +52,13 @@ def test_evidence_to_cascade_dict_mapping():
     assert cascade_dict["document_chunks"][0]["chunk_id"] == "chunk_doc_1"
 
 
+def test_cascade_does_not_use_generic_date_as_invoice_date():
+    evidence = Evidence(file_name="invoice.pdf", processing_status="success", date="2025-03-01", due_date="2025-03-01")
+    invoice = evidence_to_cascade_dict([evidence])["invoice"]
+    assert invoice["invoice_date"] is None
+    assert invoice["due_date"] == "2025-03-01"
+
+
 def test_cascade_decision_maker_execution():
     decision_maker = CascadeDecisionMaker()
     

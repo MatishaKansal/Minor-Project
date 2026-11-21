@@ -15,6 +15,20 @@ from backend.parsers.image_parser import (
 from backend.database.supabase_repository import persist_image_evidence
 from backend.database.supabase_repository import BusinessContextError, get_or_create_default_business
 from backend.schemas.evidence import Evidence, EvidenceProvenance
+from backend.database.supabase_repository import _database_date, _insert_invoice_records
+
+
+@pytest.mark.parametrize(("raw", "expected"), [
+    ("15/09/2026", "2026-09-15"),
+    ("15-09-2026", "2026-09-15"),
+    ("2026-09-15", "2026-09-15"),
+    ("2026.09.15", "2026-09-15"),
+    ("15 September 2026", "2026-09-15"),
+    ("September 19", None),
+    ("2026-02-31", None),
+])
+def test_database_date_normalizes_without_inventing_a_year(raw, expected):
+    assert _database_date(raw) == expected
 
 
 @pytest.fixture
@@ -440,6 +454,19 @@ class FakeStorage:
         return {"Key": _path}
 
 
+@pytest.mark.parametrize(("invoice_date", "due_date", "expected"), [
+    ("2026.09.15", "30/09/2026", ("2026-09-15", "2026-09-30")),
+    (None, "30/09/2026", (None, "2026-09-30")),
+])
+def test_invoice_date_persistence_does_not_substitute_generic_date(invoice_date, due_date, expected):
+    evidence = Evidence(file_name="invoice.pdf", processing_status="success", date=due_date,
+                        invoice_date=invoice_date, due_date=due_date)
+    client = FakeSupabaseClient()
+    _insert_invoice_records(client, "file-1", "business-1", evidence)
+    invoice = next(row for table, row in client.calls if table == "invoice")
+    assert (invoice["invoice_date"], invoice["due_date"]) == expected
+
+
 def test_persists_image_evidence_in_schema_order(tmp_path):
     path = tmp_path / "receipt.jpg"
     path.write_bytes(b"test image")
@@ -482,7 +509,6 @@ def test_persists_seller_identity_to_business_profile(tmp_path):
         if name == "business" and "update" in row
     ]
     assert business_updates == [{
-        "business_name": "RedBull India Pvt. Ltd",
         "gstin": "09AADCR5842H1Z6",
         "state_code": "09",
         "pan": "AADCR5842H",

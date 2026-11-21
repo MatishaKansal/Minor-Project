@@ -45,8 +45,8 @@ const money = (value, currency = 'INR') => {
 
 function AuditWorkspace({ page, role, onOpenSearch }) {
   const { apiFetch } = useAuth()
-  const canAudit = role === 'administrator' || role === 'auditor'
-  const canReview = role === 'administrator' || role === 'reviewer'
+  const canAudit = role === 'administrator'
+  const canReview = canAudit
   const [summary, setSummary] = useState(emptySummary)
   const [invoices, setInvoices] = useState([])
   const [detail, setDetail] = useState(null)
@@ -253,7 +253,7 @@ function AuditWorkspace({ page, role, onOpenSearch }) {
     Planning: ['In Progress'],
     'In Progress': ['Under Review'],
     'Under Review': [...(canAudit ? ['In Progress'] : []), ...(canReview ? ['Completed'] : [])],
-    Completed: role === 'administrator' ? ['Archived'] : [],
+    Completed: canAudit ? ['Archived'] : [],
     Archived: [],
   }[detail.engagement.status] || []) : []
 
@@ -284,7 +284,7 @@ function AuditWorkspace({ page, role, onOpenSearch }) {
       {error && <div className="audit-alert error" role="alert"><strong>Audit service unavailable</strong><span>{error}</span><button onClick={() => { setError(''); loadSummary() }}>Retry</button></div>}
       {notice && <div className="audit-alert success" role="status">{notice}</div>}
 
-      {loading ? <div className="audit-empty">Loading audit records…</div> : !summaryReady && !detail ? (
+      {loading ? <div className="audit-empty" role="status">Loading audit records…</div> : !summaryReady && !detail ? (
         <div className="audit-empty"><strong>Live audit records are unavailable.</strong><span>Dashboard metrics are hidden until the audit API returns real engagement data.</span></div>
       ) : (
         detail ? (
@@ -381,13 +381,13 @@ function FindingList({ findings, role, reviewComment, setReviewComment, decideFi
   if (!findings.length) return <div className="audit-panel"><div className="audit-empty small-empty">No findings have been recorded. Run the available audit procedures to evaluate linked transactions.</div></div>
   return <section className={`audit-panel ${compact ? 'compact-findings' : ''}`}><div className="audit-finding-list">{findings.map((finding) => <article className="audit-finding" key={finding.finding_id}>
     <div className="finding-main"><div className="finding-title-row"><strong>{finding.title}</strong><span className={`severity severity-${finding.severity.toLowerCase()}`}>{finding.severity}</span><span className="finding-status">{finding.status}</span></div><p>{finding.description}</p><p className="finding-basis">{finding.severity_basis}{finding.financial_exposure !== null && finding.financial_exposure !== undefined ? ` Exposure: ${finding.financial_exposure}.` : ''}</p><small>{finding.rule_id} · Invoice {finding.invoice_id.slice(0, 8)} · {new Date(finding.created_at).toLocaleDateString()}</small></div>
-    {!compact && role !== 'read_only_viewer' && <div className="finding-review"><input aria-label="Review comment" placeholder="Add review comment…" value={reviewComment[finding.finding_id] || ''} onChange={(event) => setReviewComment((current) => ({ ...current, [finding.finding_id]: event.target.value }))} /><div>{findingActions(finding.status, role).map((status) => <button key={status} disabled={working} onClick={() => decideFinding(finding.finding_id, status)}>{({ 'Under Review': 'Review', Confirmed: 'Confirm', Resolved: 'Resolve', 'False Positive': 'Dismiss', Closed: 'Close' })[status]}</button>)}</div></div>}
+    {!compact && <div className="finding-review"><input aria-label="Review comment" placeholder="Add review comment…" value={reviewComment[finding.finding_id] || ''} onChange={(event) => setReviewComment((current) => ({ ...current, [finding.finding_id]: event.target.value }))} /><div>{findingActions(finding.status, role).map((status) => <button key={status} disabled={working} onClick={() => decideFinding(finding.finding_id, status)}>{({ 'Under Review': 'Review', Confirmed: 'Confirm', Resolved: 'Resolve', 'False Positive': 'Dismiss', Closed: 'Close' })[status]}</button>)}</div></div>}
   </article>)}</div></section>
 }
 
 function findingActions(currentStatus, role) {
-  const reviewer = role === 'administrator' || role === 'reviewer'
-  const auditor = role === 'administrator' || role === 'auditor'
+  const reviewer = role === 'administrator'
+  const auditor = reviewer
   const actions = {
     Open: ['Under Review', 'Confirmed', 'False Positive', 'Resolved', 'Closed'],
     'Under Review': ['Confirmed', 'False Positive', 'Resolved', 'Closed'],
@@ -398,7 +398,7 @@ function findingActions(currentStatus, role) {
   }[currentStatus] || []
   return actions.filter((status) => {
     if (['Confirmed', 'False Positive', 'Closed'].includes(status)) return reviewer
-    return auditor || role === 'reviewer'
+    return auditor
   })
 }
 

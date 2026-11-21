@@ -2,6 +2,10 @@
 
 import logging
 import os
+import re
+from email import policy
+from email.parser import HeaderParser
+from email.utils import getaddresses
 from pathlib import Path
 
 from backend.schemas.evidence import Evidence, EvidenceProvenance
@@ -10,6 +14,37 @@ from backend.services.financial_field_extractor import extract_financial_fields
 LOGGER = logging.getLogger(__name__)
 SUPPORTED_EXTENSIONS = {".txt"}
 DEFAULT_LANGUAGE = "eng"
+
+
+def _extract_email_sender(text: str) -> EvidenceProvenance | None:
+    headers = HeaderParser(policy=policy.default).parsestr(text)
+    from_headers = headers.get_all("From", [])
+    if len(from_headers) != 1:
+        return None
+
+    addresses = getaddresses([str(from_headers[0])])
+    if len(addresses) != 1:
+        return None
+    sender = addresses[0][1]
+    if not re.fullmatch(r"[^\s@<>]+@[^\s@<>]+", sender):
+        return None
+
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        if re.match(r"(?i)^from:", line):
+            source_lines = [line]
+            for continuation in lines[index + 1:]:
+                if not continuation.startswith((" ", "\t")):
+                    break
+                source_lines.append(continuation)
+            return EvidenceProvenance(
+                field_name="sender",
+                value=sender,
+                source_text="\n".join(source_lines),
+                line_number=index + 1,
+                extraction_method="email_from_header",
+            )
+    return None
 
 
 def validate_txt_path(file_path: str | os.PathLike[str]) -> Path:
@@ -39,6 +74,10 @@ def parse_text(
         clean_text = text.strip()
         financial_fields = extract_financial_fields(clean_text)
         provenance = financial_fields.pop("provenance", [])
+        sender_source = _extract_email_sender(clean_text)
+        evidence_provenance = [EvidenceProvenance.model_validate(item) for item in provenance]
+        if sender_source:
+            evidence_provenance.append(sender_source)
 
         evidence = Evidence(
             source_type=source_type,
@@ -46,7 +85,8 @@ def parse_text(
             extracted_text=clean_text,
             language=language,
             processing_status="success",
-            provenance=[EvidenceProvenance.model_validate(item) for item in provenance],
+            provenance=evidence_provenance,
+            sender=sender_source.value if sender_source else None,
             **financial_fields,
         )
 

@@ -1,0 +1,14 @@
+From: receivables@navneetpaper.in
+To: accounts@apexstationery.in
+Date: 27-Oct-2026 03:40 PM
+Subject: Balance Payment Reminder - Invoice INV-NPB-2026-079
+
+Dear Apex Stationery Accounts Team,
+
+We acknowledge receipt of your partial NEFT payment of INR 30,000.00 (Ref: UTR26102100674) dated 21-Oct-2026 against Invoice INV-NPB-2026-079 (Total: INR 56,000.00, PO-2026-105).
+
+A balance of INR 26,000.00 remains outstanding. Kindly clear the remaining amount by 03-Nov-2026.
+
+Best regards,
+Navneet Paper & Boards Distributors
+GSTIN: 04AABCN7392M1Z2

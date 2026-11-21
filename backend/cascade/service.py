@@ -39,7 +39,7 @@ def evidence_to_cascade_dict(
     for ev in evidence_list:
         inv_data = {
             "invoice_number": ev.invoice_number,
-            "invoice_date": ev.date,
+            "invoice_date": ev.invoice_date,
             "due_date": ev.due_date,
             "invoice_type": ev.invoice_type,
             "seller_name": ev.seller_name or ev.party_name,

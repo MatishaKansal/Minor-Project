@@ -33,6 +33,46 @@ def test_parse_raw_text_chat_input_extracts_fields():
     assert amount_provenance.page_number == 1
 
 
+def test_email_sender_is_separate_from_transaction_party():
+    text = (
+        "From: Accounts Team <accounts@smallbiz.com>\n"
+        "To: billing@zenithservices.com\n"
+        "Subject: Payment confirmation\n\n"
+        "Invoice #8003 paid.\n\nThanks,\nZenithservices Finance Department"
+    )
+    result = parse_text(text)
+
+    assert result.sender == "accounts@smallbiz.com"
+    assert result.party_name == "Zenithservices Finance Department"
+    sender_source = next(item for item in result.provenance if item.field_name == "sender")
+    assert sender_source.value == result.sender
+    assert sender_source.source_text == "From: Accounts Team <accounts@smallbiz.com>"
+    assert sender_source.line_number == 1
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Vendor: ACME Supplies\nTotal: USD 1.00",
+        "Hello\n\nFrom: sender@example.com",
+        "From: Not an email address\nSubject: Invoice\n\nTotal: USD 1.00",
+        "From: a@example.com\nFrom: b@example.com\nSubject: Invoice\n\nTotal: USD 1.00",
+    ],
+)
+def test_sender_is_not_inferred_without_one_valid_email_header(text):
+    assert parse_text(text).sender is None
+
+
+def test_sender_handles_folded_header():
+    result = parse_text(
+        "Subject: Payment\nFrom: Accounts Team\n <accounts@example.com>\n\nTotal: USD 1.00"
+    )
+    assert result.sender == "accounts@example.com"
+    sender_source = next(item for item in result.provenance if item.field_name == "sender")
+    assert sender_source.line_number == 2
+    assert sender_source.source_text == "From: Accounts Team\n <accounts@example.com>"
+
+
 def test_parse_txt_file_extracts_fields_and_provenance(tmp_path: Path):
     txt_file = tmp_path / "sample_invoice.txt"
     txt_file.write_text(

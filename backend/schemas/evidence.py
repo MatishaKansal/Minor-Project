@@ -58,7 +58,9 @@ class Evidence(BaseModel):
     amount: Optional[str] = None
     currency: Optional[str] = None
     party_name: Optional[str] = None
+    sender: Optional[str] = None
     invoice_number: Optional[str] = None
+    invoice_date: Optional[str] = None
     description: Optional[str] = None
     due_date: Optional[str] = None
     invoice_type: Optional[str] = None

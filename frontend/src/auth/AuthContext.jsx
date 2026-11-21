@@ -7,7 +7,7 @@ const supabase = supabaseUrl && supabaseAnonKey
   ? createClient(supabaseUrl, supabaseAnonKey, {
     auth: {
       autoRefreshToken: true,
-      detectSessionInUrl: true,
+      detectSessionInUrl: false,
       persistSession: true,
     },
   })
@@ -28,7 +28,7 @@ export function AuthProvider({ children }) {
       return undefined
     }
     let active = true
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, nextSession) => {
       if (!active) return
       setSession(nextSession)
       setInitializing(false)
@@ -97,9 +97,15 @@ export function AuthProvider({ children }) {
     return () => { active = false }
   }, [session, apiFetch])
 
-  const signIn = useCallback(async (email, password) => {
+  const signIn = useCallback(async (username, password) => {
     if (!supabase) throw new Error('Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to enable Supabase Auth.')
-    const { error } = await supabase.auth.signInWithPassword({ email, password })
+    const response = await fetch('/api/auth/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    })
+    const body = await response.json()
+    if (!response.ok) throw new Error(typeof body.detail === 'string' ? body.detail : 'Sign in failed.')
+    const { error } = await supabase.auth.setSession(body)
     if (error) throw error
   }, [])
 
@@ -108,6 +114,16 @@ export function AuthProvider({ children }) {
     const { error } = await supabase.auth.signOut()
     if (error) throw error
   }, [])
+
+  const setUsername = useCallback(async (username) => {
+    const response = await apiFetch('/api/auth/username', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username }),
+    })
+    const body = await response.json()
+    if (!response.ok) throw new Error(typeof body.detail === 'string' ? body.detail : 'Could not set username.')
+    setProfile((current) => ({ ...current, username: body.username }))
+  }, [apiFetch])
 
   const value = useMemo(() => ({
     configured: Boolean(supabase),
@@ -118,8 +134,9 @@ export function AuthProvider({ children }) {
     loading: initializing || profileLoading,
     signIn,
     signOut,
+    setUsername,
     apiFetch,
-  }), [session, profile, profileError, initializing, profileLoading, signIn, signOut, apiFetch])
+  }), [session, profile, profileError, initializing, profileLoading, signIn, signOut, setUsername, apiFetch])
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }

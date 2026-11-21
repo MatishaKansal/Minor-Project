@@ -250,20 +250,20 @@ def parse_pdf(
                 )
             else:
                 ocr_field_names = {"invoice_number", "invoice_date", "date", "place_of_supply", "buyer_name"}
-                for field_name in ocr_field_names:
-                    if ocr_fields.get(field_name):
-                        financial_fields[field_name] = ocr_fields[field_name]
+                replaced_fields = {name for name in ocr_field_names if ocr_fields.get(name)}
+                for field_name in replaced_fields:
+                    financial_fields[field_name] = ocr_fields[field_name]
                 # Keep generic date in sync with the selected invoice date.
                 if financial_fields.get("invoice_date"):
                     financial_fields["date"] = financial_fields["invoice_date"]
                 ocr_provenance = [
                     {**item, "confidence": ocr_confidence}
                     for item in ocr_fields.get("provenance", [])
-                    if item.get("field_name") in ocr_field_names
+                    if item.get("field_name") in replaced_fields
                 ]
                 retained_provenance = [
                     item for item in financial_fields.get("provenance", [])
-                    if item.get("field_name") not in ocr_field_names
+                    if item.get("field_name") not in replaced_fields
                 ]
                 financial_fields["provenance"] = retained_provenance + ocr_provenance
                 if ocr_confidence is not None:

@@ -1,0 +1,15 @@
+From: billing@capitalofficesystems.in
+To: accounts@apexstationery.in
+Date: 11-Oct-2026 10:15 AM
+Subject: Invoice INV-COS-2026-309 (Ref PO-2026-103) - Toner Price Revision
+
+Dear Accounts Team,
+
+Please find attached Tax Invoice INV-COS-2026-309 for INR 27,140.00 against your Purchase Order PO-2026-103.
+Note that due to an October supplier tariff hike, the LaserJet 88A Compatible Toner Cartridge has been billed at INR 950/unit instead of the INR 800/unit listed on PO-2026-103.
+
+Kindly process payment via RTGS at your earliest convenience.
+
+Regards,
+Capital Office Systems & Consumables
+GSTIN: 07AAFCC9042R1Z2

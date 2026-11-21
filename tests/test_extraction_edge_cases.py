@@ -114,6 +114,27 @@ def test_issue_date_label_separated():
     assert fields["date"] == "March 25, 2024"
 
 
+def test_invoice_and_due_dates_are_extracted_independently_with_provenance():
+    fields = extract_financial_fields("Invoice Date: 2026.09.15\nDue Date: 30/09/2026")
+    assert fields["invoice_date"] == "2026.09.15"
+    assert fields["due_date"] == "30/09/2026"
+    sources = {item["field_name"]: item["source_text"] for item in fields["provenance"]}
+    assert sources["invoice_date"] == "Invoice Date: 2026.09.15"
+    assert sources["due_date"] == "Due Date: 30/09/2026"
+
+
+def test_due_date_is_not_treated_as_an_invoice_date():
+    fields = extract_financial_fields("Invoice No: INV-2\nDue Date: 30/09/2026")
+    assert fields["invoice_date"] is None
+    assert fields["due_date"] == "30/09/2026"
+
+
+def test_labeled_date_does_not_consume_a_later_due_date():
+    fields = extract_financial_fields("Invoice Date:\nDue Date: 30/09/2026")
+    assert fields["invoice_date"] is None
+    assert fields["due_date"] == "30/09/2026"
+
+
 # ─── Party Name Edge Cases ────────────────────────────────────────────────────
 
 def test_party_name_llc_no_label():

@@ -1,4 +1,9 @@
 from backend.audit.engine import evaluate_population
+from backend.audit import router as audit_router
+from fastapi import HTTPException
+from types import SimpleNamespace
+
+import pytest
 
 
 def _invoice(invoice_id="invoice-1", **overrides):
@@ -77,3 +82,62 @@ def test_non_finite_invoice_amount_is_insufficient_evidence():
     results = _results([_invoice(invoice_total="NaN")])
 
     assert next(row for row in results if row["rule_id"] == "AR-03")["outcome"] == "INSUFFICIENT EVIDENCE"
+
+
+@pytest.mark.parametrize("missing", [False, True])
+def test_summary_counts_only_completed_results_and_company_findings(monkeypatch, missing):
+    queries = []
+
+    class Query:
+        def __init__(self, table):
+            self.table, self.filters, self.count_requested = table, [], False
+            queries.append(self)
+
+        def select(self, _columns, **kwargs):
+            self.count_requested = kwargs.get("count") == "exact"
+            return self
+
+        def eq(self, *args):
+            self.filters.append(args)
+            return self
+
+        def in_(self, *args):
+            self.filters.append(args)
+            return self
+
+        def order(self, *_args, **_kwargs):
+            return self
+
+        def limit(self, *_args):
+            return self
+
+        def execute(self):
+            if self.table == "audit_engagement":
+                return SimpleNamespace(data=[{"engagement_id": "own", "status": "Draft"}])
+            if self.count_requested:
+                return SimpleNamespace(count=None if missing else (1200 if self.table == "audit_test_result" else 3))
+            return SimpleNamespace(data=[])
+
+    client = SimpleNamespace(table=Query)
+    monkeypatch.setattr(audit_router, "_client_and_business", lambda _user: (client, "company-a"))
+    if missing:
+        with pytest.raises(HTTPException) as error:
+            audit_router.audit_summary(object())
+        assert error.value.status_code == 502
+        return
+    summary = audit_router.audit_summary(object())
+    assert summary["completed_check_count"] == 1200
+    assert summary["open_findings"] == 3
+    assert ("business_id", "company-a") in queries[0].filters
+    count_queries = [query for query in queries if query.count_requested]
+    assert ("engagement_id", ["own"]) in count_queries[0].filters
+    assert ("outcome", ["PASS", "EXCEPTION"]) in count_queries[0].filters
+    assert ("engagement_id", ["own"]) in count_queries[1].filters
+
+
+def test_empty_summary_has_no_completed_checks(monkeypatch):
+    query = SimpleNamespace(select=lambda *_args: query, eq=lambda *_args: query,
+                            order=lambda *_args, **_kwargs: query,
+                            execute=lambda: SimpleNamespace(data=[]))
+    monkeypatch.setattr(audit_router, "_client_and_business", lambda _user: (SimpleNamespace(table=lambda _name: query), "company"))
+    assert audit_router.audit_summary(object())["completed_check_count"] == 0

@@ -1,20 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
-import AdminUsers from './AdminUsers.jsx'
-import AuditWorkspace from './AuditWorkspace.jsx'
+import PlatformDashboard from './PlatformDashboard.jsx'
+import CompanyWorkspace from './CompanyWorkspace.jsx'
 import { AuthLoadingScreen, ProfileAccessScreen, SignInScreen } from './auth/AuthScreens.jsx'
 import { useAuth } from './auth/AuthContext.jsx'
-
-const recentChats = [
-  { title: 'Vendor payment review', prompt: 'Was invoice INV-1048 paid twice?' },
-  { title: 'Unmatched receipt', prompt: 'Find expenses missing receipts' },
-  { title: 'September close', prompt: 'Summarise the audit evidence' },
-]
 
 const suggestions = [
   { title: 'Check for duplicate payments', description: 'Compare invoices with bank activity' },
   { title: 'Find expenses missing receipts', description: 'Review expenses against receipts' },
-  { title: 'Summarise the evidence', description: 'Get a brief overview with source links' },
-  { title: 'Show items to review', description: 'See findings that need your attention' },
+  { title: 'Summarise my records', description: 'Get a brief overview with source links' },
+  { title: 'Show items to review', description: 'See issues that need your attention' },
 ]
 
 function Icon({ name, size = 17 }) {
@@ -53,60 +47,23 @@ function formatActivityStep(message) {
   return 'Preparing document search'
 }
 
-function getSampleAnswer(prompt) {
-  const normalized = prompt.toLowerCase()
-
-  if (normalized.includes('receipt')) {
-    return {
-      text: 'I found one expense in the sample register that does not appear to have a matching receipt. It may have been filed separately, so this needs a quick check before it is treated as a missing document.',
-      finding: 'Receipt not located',
-      detail: 'Expense register row 32 lists $86.40 for office supplies. No matching receipt was found in the sample receipt bundle.',
-      sources: ['Expense register · row 32', 'Receipt bundle · 9 pages'],
-    }
-  }
-
-  if (normalized.includes('summar')) {
-    return {
-      text: 'The sample files cover September transactions, several supplier invoices, and expense receipts. I found two items that may need a closer look; both are linked below.',
-      finding: '2 items for review',
-      detail: 'One payment amount differs from the invoice, and one expense has no matching receipt in the files provided.',
-      sources: ['Bank statement · Sep', 'Expense register · rows 18, 27, 32'],
-    }
-  }
-
-  if (normalized.includes('attention') || normalized.includes('review') || normalized.includes('item')) {
-    return {
-      text: 'Two items in the sample records may need your attention. I’ve linked the source rows so you can review them in context.',
-      finding: '2 items for review',
-      detail: 'A supplier payment does not match its invoice amount, and a small office expense has no matching receipt in the files provided.',
-      sources: ['Invoice INV-1048 · page 1', 'Expense register · row 32'],
-    }
-  }
-
-  return {
-    text: 'I found two bank entries that may relate to invoice INV-1048. The amounts differ, so the records do not confirm a duplicate payment on their own.',
-    finding: 'Possible amount mismatch',
-    detail: 'The invoice is for $1,240.00. The similar statement entries are $1,240.00 and $1,060.00; the second entry may be unrelated.',
-    sources: ['Invoice INV-1048 · page 1', 'Bank statement · rows 18, 27'],
-  }
-}
-
-function App() {
+function Workspace() {
   const approveEmailDraft = async (proposal) => {
     try {
-      const res = await fetch("/api/actions/approve-email", {
+      const res = await apiFetch("/api/actions/approve-email", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(proposal.payload)
       });
       const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Email approval failed.')
       showNotice(data.message || "Dispute email approved and queued!");
     } catch (err) {
       showNotice("Email delivery approval failed: " + err.message);
     }
   };
   const { loading: authLoading, session, profile, signOut, apiFetch } = useAuth()
-  const [activeView, setActiveView] = useState('dashboard')
+  const [activeView, setActiveView] = useState('overview')
   const [theme, setTheme] = useState(() => {
     try {
       return localStorage.getItem('ledgerline-react-theme-v2') || 'light'
@@ -119,12 +76,30 @@ function App() {
   const [attachedFiles, setAttachedFiles] = useState([])
   const [knownFiles, setKnownFiles] = useState([])
   const [isBusy, setIsBusy] = useState(false)
-  const [activeChat, setActiveChat] = useState('')
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [notice, setNotice] = useState('')
   const fileInput = useRef(null)
   const noticeTimer = useRef(null)
   const conversationEnd = useRef(null)
+
+  const downloadNotice = async (proposal) => {
+    try {
+      const requestedUrl = new URL(proposal.payload?.download_url || '/api/actions/generate-letter-pdf', window.location.origin)
+      if (requestedUrl.origin !== window.location.origin || requestedUrl.pathname !== '/api/actions/generate-letter-pdf') {
+        throw new Error('Invalid notice download URL.')
+      }
+      const response = await apiFetch(requestedUrl.pathname + requestedUrl.search)
+      if (!response.ok) throw new Error(`Could not download notice (${response.status}).`)
+      const url = URL.createObjectURL(await response.blob())
+      const link = document.createElement('a')
+      link.href = url
+      link.download = 'audit-notice.pdf'
+      link.click()
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+    } catch (error) {
+      showNotice(error.message)
+    }
+  }
 
   useEffect(() => {
     document.documentElement.style.colorScheme = theme
@@ -142,12 +117,6 @@ function App() {
 
   useEffect(() => () => window.clearTimeout(noticeTimer.current), [])
 
-  useEffect(() => {
-    const handlePageChange = (event) => setActiveView(event.detail)
-    window.addEventListener('audit-page', handlePageChange)
-    return () => window.removeEventListener('audit-page', handlePageChange)
-  }, [])
-
   function showNotice(message) {
     setNotice(message)
     window.clearTimeout(noticeTimer.current)
@@ -160,7 +129,6 @@ function App() {
     setMessages([])
     setDraft('')
     setAttachedFiles([])
-    setActiveChat('')
     setSidebarOpen(false)
   }
 
@@ -185,7 +153,7 @@ function App() {
 
   const fetchConnectorStatus = async () => {
     try {
-      const res = await fetch('/api/connectors/email/status')
+      const res = await apiFetch('/api/connectors/email/status')
       if (res.ok) {
         const data = await res.json()
         setConnectorStatus(data)
@@ -196,8 +164,8 @@ function App() {
   }
 
   useEffect(() => {
-    fetchConnectorStatus()
-  }, [])
+    if (profile) fetchConnectorStatus()
+  }, [profile])
 
   const handleProviderSelect = (prov) => {
     setConnectorProvider(prov)
@@ -228,7 +196,7 @@ function App() {
         imap_host: connectorMode === 'demo' ? 'demo-mailbox.internal' : connectorHost,
         imap_port: connectorPort || 993,
       }
-      const res = await fetch('/api/connectors/email/authorize', {
+      const res = await apiFetch('/api/connectors/email/authorize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -246,8 +214,9 @@ function App() {
 
   const handleRevoke = async () => {
     try {
-      const res = await fetch('/api/connectors/email/revoke', { method: 'POST' })
+      const res = await apiFetch('/api/connectors/email/revoke', { method: 'POST' })
       const data = await res.json()
+      if (!res.ok) throw new Error(data.detail || 'Could not revoke access.')
       setConnectorStatus(data.status)
       showNotice('Mailbox access revoked.')
     } catch (err) {
@@ -259,7 +228,7 @@ function App() {
     if (isSyncing) return
     setIsSyncing(true)
     try {
-      const res = await fetch('/api/connectors/email/sync', {
+      const res = await apiFetch('/api/connectors/email/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ max_items: 2 }),
@@ -296,14 +265,14 @@ function App() {
           activity: [
             { label: `Connected to mailbox (${data.email_account})`, state: 'done' },
             { label: `Extracted ${data.invoices_ingested} invoice attachment(s)`, state: 'done' },
-            { label: 'Parsed GST provenance & indexed vector chunks in Supabase', state: 'done' },
+            { label: 'Prepared documents for search', state: 'done' },
           ],
           chunks: [],
           warnings: [],
           files: (data.items || []).flatMap((it) => (it.attachments || []).map((att) => ({ file_name: att }))),
           resultsReceived: true,
           llmCalled: true,
-          answer: `Automated Ingestion: Successfully scanned ${data.emails_scanned} email(s) and ingested ${data.invoices_ingested} invoice document(s) from ${data.email_account || 'mailbox'}. Evidence has been indexed into your Supabase RAG workspace.`,
+          answer: `Checked ${data.emails_scanned} email(s) and added ${data.invoices_ingested} invoice document(s) from ${data.email_account || 'your mailbox'}.`,
           proposals: data.proposals || [],
         },
       ])
@@ -345,7 +314,7 @@ function App() {
 
   const fetchPOSStatus = async () => {
     try {
-      const res = await fetch('/api/connectors/pos/status')
+      const res = await apiFetch('/api/connectors/pos/status')
       if (res.ok) {
         const data = await res.json()
         setPosStatus(data)
@@ -356,8 +325,8 @@ function App() {
   }
 
   useEffect(() => {
-    fetchPOSStatus()
-  }, [])
+    if (profile) fetchPOSStatus()
+  }, [profile])
 
   const handleAuthorizePOS = async (e) => {
     if (e) e.preventDefault()
@@ -370,7 +339,7 @@ function App() {
         gstin: posGstin,
         terminal_id: posTerminalId,
       }
-      const res = await fetch('/api/connectors/pos/authorize', {
+      const res = await apiFetch('/api/connectors/pos/authorize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -389,8 +358,9 @@ function App() {
 
   const handleRevokePOS = async () => {
     try {
-      const res = await fetch('/api/connectors/pos/revoke', { method: 'POST' })
+      const res = await apiFetch('/api/connectors/pos/revoke', { method: 'POST' })
       const data = await res.json()
+      if (!res.ok) throw new Error(data.detail || 'Could not revoke access.')
       setPosStatus(data.status)
       setPosSessionApiKey('')
       showNotice('POS connection revoked.')
@@ -403,7 +373,7 @@ function App() {
     if (isScanningBarcode) return
     setIsScanningBarcode(true)
     try {
-      const res = await fetch('/api/connectors/pos/scan', {
+      const res = await apiFetch('/api/connectors/pos/scan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -443,7 +413,7 @@ function App() {
           files: [{ file_name: data.file_name }],
           resultsReceived: true,
           llmCalled: true,
-          answer: `POS Checkout Registered: Successfully generated retail invoice ${data.bill_number} for INR ${data.grand_total} (Paid via ${scanPaymentMethod}). Indexed into your Supabase RAG workspace.`,
+          answer: `Created invoice ${data.bill_number} for INR ${data.grand_total}, paid via ${scanPaymentMethod}.`,
           proposals: data.proposals || [],
         },
       ])
@@ -458,7 +428,7 @@ function App() {
     if (isSyncingPOSBatch) return
     setIsSyncingPOSBatch(true)
     try {
-      const res = await fetch('/api/connectors/pos/sync-batch', {
+      const res = await apiFetch('/api/connectors/pos/sync-batch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ batch_size: 3 }),
@@ -494,7 +464,7 @@ function App() {
           files: (data.bills || []).map((b) => ({ file_name: b.file_name })),
           resultsReceived: true,
           llmCalled: true,
-          answer: `POS Sales Batch Ingestion: Synced ${data.bills_ingested} register sales bills. Reconciliation Patrol evaluated sales against bank statement settlements.`,
+          answer: `Synced ${data.bills_ingested} sales bills and checked them against available bank settlements.`,
           proposals: data.proposals || [],
         },
       ])
@@ -505,22 +475,21 @@ function App() {
     }
   }
 
-  async function sendMessage(value = draft) {
+  async function sendMessage(value = draft, uploadFiles = attachedFiles) {
     const question = value.trim()
     if (!question || isBusy) return
 
-    const files = [...attachedFiles]
+    const files = [...uploadFiles]
     const fileNames = files.map((file) => file.name)
     const assistantId = `assistant-${Date.now()}-${Math.random().toString(16).slice(2)}`
 
     setMessages((current) => [
       ...current,
       { id: `user-${assistantId}`, role: 'user', text: question, files: fileNames },
-      { id: assistantId, role: 'assistant', busy: true, status: '', activityExpanded: true, activity: [], chunks: [], warnings: [], files: [], resultsReceived: false },
+      { id: assistantId, role: 'assistant', busy: true, status: '', activityExpanded: false, activity: [], chunks: [], warnings: [], files: [], resultsReceived: false },
     ])
     setDraft('')
     setAttachedFiles([])
-    setActiveChat(question.length > 33 ? `${question.slice(0, 30)}…` : question)
     setIsBusy(true)
 
     const updateAssistant = (updates) => {
@@ -536,9 +505,6 @@ function App() {
       body.append('question', question)
       files.forEach((file) => body.append('files', file, file.name))
 
-      if (files.length && !['administrator', 'auditor'].includes(profile.role)) {
-        throw new Error('Only auditors and administrators can upload evidence.')
-      }
       const response = await apiFetch('/api/query', { method: 'POST', body })
       if (!response.ok) throw new Error(`The server returned ${response.status}.`)
       if (!response.body) throw new Error('This browser could not read the streamed response.')
@@ -654,18 +620,7 @@ function App() {
     }
   }
 
-  function selectRecentChat(chat) {
-    setActiveView('search')
-    setSidebarOpen(false)
-    sendMessage(chat.prompt)
-  }
-
   function handleFiles(event) {
-    if (!['administrator', 'auditor'].includes(profile.role)) {
-      showNotice('Your role can search records but cannot upload evidence.')
-      event.target.value = ''
-      return
-    }
     const files = Array.from(event.target.files || [])
     if (!files.length) return
     setAttachedFiles((current) => [...current, ...files])
@@ -678,59 +633,24 @@ function App() {
   if (!profile) return <ProfileAccessScreen />
 
   return (
-    <div className={`app-shell theme-${theme}`}>
-      <aside className={`sidebar ${sidebarOpen ? 'sidebar-open' : ''}`}>
+    <div className={`app-shell theme-${theme} company-shell`}>
+      <aside className={`sidebar company-sidebar ${sidebarOpen ? 'sidebar-open' : ''}`}>
         <div className="brand-row">
           <div className="brand"><span className="brand-mark">L</span><span>ledgerline</span></div>
           <button className="icon-button sidebar-close" onClick={() => setSidebarOpen(false)} aria-label="Close menu"><Icon name="close" /></button>
-          <button className="icon-button desktop-add" onClick={startNewChat} aria-label="Start a new conversation"><Icon name="plus" /></button>
         </div>
-
-        <button className="new-chat-button" onClick={startNewChat} disabled={isBusy}><Icon name="plus" size={16} /> New conversation</button>
-
         <div className="sidebar-section workspace-navigation">
-          <div className="section-heading">AUDIT WORKSPACE</div>
-          <nav className="workspace-nav" aria-label="Audit workspace">
-            {[['dashboard', 'Audit dashboard'], ['engagements', 'Engagements'], ['findings', 'Audit findings']].map(([view, label]) => (
+          <div className="section-heading">YOUR WORKSPACE</div>
+          <nav className="workspace-nav" aria-label="Company navigation">
+            {[['overview', 'Overview'], ['documents', 'My Documents'], ['transactions', 'Transactions'], ['checks', 'Financial Checks'], ['reports', 'Reports'], ['search', 'Financial Assistant'], ['settings', 'Company Settings']].map(([view, label]) => (
               <button key={view} className={`workspace-nav-item ${activeView === view ? 'is-selected' : ''}`} onClick={() => { setActiveView(view); setSidebarOpen(false) }}>
                 <span className="nav-indicator" />{label}
               </button>
             ))}
-            <button className={`workspace-nav-item ${activeView === 'search' ? 'is-selected' : ''}`} onClick={() => { setActiveView('search'); setSidebarOpen(false) }}>
-              <span className="nav-indicator" />Document search
-            </button>
-            {profile.role === 'administrator' && <button className={`workspace-nav-item ${activeView === 'users' ? 'is-selected' : ''}`} onClick={() => { setActiveView('users'); setSidebarOpen(false) }}>
-              <span className="nav-indicator" />User access
-            </button>}
           </nav>
         </div>
-
-        <div className="sidebar-section">
-          <div className="section-heading">RECENT CHATS</div>
-          <nav className="recent-list" aria-label="Recent chats">
-            {recentChats.map((chat) => (
-              <button className={`recent-chat ${activeChat === chat.title ? 'is-selected' : ''}`} key={chat.title} onClick={() => selectRecentChat(chat)}>
-                <span className="recent-indicator" />
-                <span className="recent-title">{chat.title}</span>
-              </button>
-            ))}
-          </nav>
-        </div>
-
-        <div className="sidebar-section files-section">
-          <div className="section-heading file-heading"><span>UPLOADED FILES</span><span className="file-total">{knownFiles.length} files</span></div>
-          <div className="file-list">
-            {knownFiles.length ? knownFiles.map((file) => (
-              <div className="evidence-file" key={file.name} title={file.name}>
-                <span className="file-type">{file.name.split('.').pop()?.slice(0, 4).toUpperCase()}</span><span className="file-title">{file.name}</span>
-              </div>
-            )) : <div className="file-empty">Files attached to a query will appear here.</div>}
-          </div>
-        </div>
-
         <div className="sidebar-footer">
-          <div className="workspace-status"><span className="status-dot" /> Supabase document search</div>
-          <div className="profile-row"><span className="profile-avatar">{(profile.email || 'U').slice(0, 1).toUpperCase()}</span><span className="profile-copy"><strong>{profile.email || 'Signed-in user'}</strong><small>{profile.role.replaceAll('_', ' ')}</small></span><button className="profile-more" onClick={() => signOut()} aria-label="Sign out">↪</button></div>
+          <div className="profile-row"><span className="profile-avatar">{(profile.username || profile.email || 'U').slice(0, 1).toUpperCase()}</span><span className="profile-copy"><strong>{profile.username || profile.email || 'Signed-in user'}</strong><small>{{ superadmin: 'Super Admin', administrator: 'Company Admin' }[profile.role] || profile.role}</small></span><button className="profile-more" onClick={() => signOut()} aria-label="Sign out">↪</button></div>
         </div>
       </aside>
 
@@ -741,54 +661,21 @@ function App() {
         <header className="topbar">
           <div className="case-heading">
             <button className="icon-button mobile-menu-button" onClick={() => setSidebarOpen(true)} aria-label="Open menu"><Icon name="menu" /></button>
-            <div><div className="case-title">Financial workspace <span>/</span> Document search</div><div className="case-subtitle">RAG retrieval · 4-tier LLM cascade decision maker</div></div>
+            <div><div className="case-title">Financial Assistant</div><div className="case-subtitle">Ask questions about your company’s records</div></div>
           </div>
           <div className="topbar-actions">
-            <button
-              className={`connector-badge ${connectorStatus.is_authorized ? 'is-connected' : ''}`}
-              onClick={() => setConnectorModalOpen(true)}
-              title="Configure Small Business Email Ingestion Connector"
-              aria-label="Manage Email Connector"
-            >
-              <span className={`connector-dot ${connectorStatus.is_authorized ? 'is-active' : ''}`} />
-              <Icon name="mail" size={14} />
-              <span>
-                {connectorStatus.is_authorized
-                  ? `${connectorStatus.email_address || 'Connected'} (${connectorStatus.mode === 'demo' ? 'Demo' : 'Live'})`
-                  : 'Connect Email Inbox'}
-              </span>
-            </button>
-
-            <button
-              className={`connector-badge ${posStatus.is_authorized ? 'is-connected' : ''}`}
-              onClick={() => setPosModalOpen(true)}
-              title="Configure Point-of-Sale (POS) & Billing Software Connector"
-              aria-label="Manage POS Connector"
-            >
-              <span className={`connector-dot ${posStatus.is_authorized ? 'is-active' : ''}`} />
-              <Icon name="cart" size={14} />
-              <span>
-                {posStatus.is_authorized
-                  ? `${posStatus.store_name} (${posStatus.mode === 'demo' ? 'Demo POS' : 'Live POS'})`
-                  : 'Connect POS / Billing'}
-              </span>
-            </button>
-
-            <span className="sample-label">LIVE RETRIEVAL</span>
-            <span className="sample-label">{profile.role.replaceAll('_', ' ').toUpperCase()}</span>
+            <button className="case-details" onClick={startNewChat} disabled={isBusy}>New conversation</button>
             <button className="theme-button" onClick={() => setTheme((current) => current === 'dark' ? 'light' : 'dark')} aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}><Icon name={theme === 'dark' ? 'sun' : 'moon'} size={16} /><span>{theme === 'dark' ? 'Light mode' : 'Dark mode'}</span></button>
-            <button className="case-details" onClick={() => showNotice('Retrieved chunks and LLM cascade audit decisions are shown below.')}>Search details <span>⌄</span></button>
-            <button className="case-details" onClick={signOut}>Sign out</button>
           </div>
         </header>
 
-        <section className="conversation-scroll" aria-label="Audit conversation">
+        <section className="conversation-scroll" aria-label="Financial assistant conversation">
           <div className="conversation-content">
             {messages.length === 0 ? (
               <div className="empty-state">
                 <div className="eyebrow">YOUR DOCUMENTS · SEARCH</div>
                 <h1>What would you like to review?</h1>
-                <p>Ask a question about your saved documents or attach new files. I’ll show the matching text chunks and their source files.</p>
+                <p>Ask a question about your saved documents or attach new files. You can review the supporting information alongside each answer.</p>
                 <div className="suggestion-grid">
                   {suggestions.map((suggestion) => (
                     <button className="suggestion-card" key={suggestion.title} onClick={() => sendMessage(suggestion.title)}>
@@ -809,15 +696,15 @@ function App() {
                   <article className="message-row assistant-row" key={message.id || `assistant-${index}`}>
                     <div className="message-avatar assistant-avatar">L</div>
                     <div className="message-content answer-content">
-                      <div className="message-label">Ledgerline <span>·</span> Search result</div>
+                      <div className="message-label">Ledgerline <span>·</span> Financial Assistant</div>
 
                       <section className={`activity-card ${message.error ? 'activity-error' : ''}`} aria-live="polite">
                         <div className="activity-header">
                           <span className={`activity-indicator ${message.busy ? 'is-working' : message.error ? 'has-failed' : 'is-done'}`} />
-                          <div className="activity-copy"><strong>Search activity</strong><span>{message.busy ? (message.currentStep || 'Starting search…') : message.error ? 'Search stopped' : 'Search complete'}</span></div>
-                          {!message.busy && message.activity.length > 0 && <button className="activity-toggle" onClick={() => updateAssistant({ activityExpanded: !message.activityExpanded })}>{message.activityExpanded ? 'Hide steps' : 'View steps'}</button>}
+                          <div className="activity-copy"><strong>{message.busy ? 'Working on your request' : message.error ? 'Request stopped' : 'Request complete'}</strong><span>{message.busy ? (message.currentStep || 'Getting started…') : message.error ? 'See details below' : 'Your results are ready'}</span></div>
+                          {message.activity.length > 0 && <button className="activity-toggle" onClick={() => setMessages((current) => current.map((item) => item.id === message.id ? { ...item, activityExpanded: !item.activityExpanded } : item))}>{message.activityExpanded ? 'Hide steps' : 'View steps'}</button>}
                         </div>
-                        {(message.busy || message.activityExpanded) && message.activity.length > 0 && <ol className="activity-steps">
+                        {message.activityExpanded && message.activity.length > 0 && <ol className="activity-steps">
                           {message.activity.map((step, stepIndex) => <li className={`activity-step step-${step.state}`} key={`${step.label}-${stepIndex}`}><span className="step-marker" /><span>{step.label}</span></li>)}
                         </ol>}
                       </section>
@@ -834,25 +721,25 @@ function App() {
                         <div className="saved-file-list">{message.files.map((file) => <div className="saved-file" key={file.file_id || file.file_name}><Icon name="file" size={15} /><span>{file.file_name}</span></div>)}</div>
                       </section>}
 
-                      {message.resultsReceived && <section className="response-section evidence-section">
-                        <div className="section-title"><h3>Retrieved evidence</h3><span>{message.chunks.length} {message.chunks.length === 1 ? 'passage' : 'passages'}</span></div>
-                        {message.chunks.length > 0 ? <div className="retrieved-chunks">{message.chunks.map((chunk) => <article className="retrieved-chunk" key={chunk.chunk_id}>
-                          <div className="chunk-heading"><span className="chunk-file"><Icon name="file" size={15} />{chunk.file_name}</span><span className="chunk-score">Match {Number(chunk.similarity || 0).toFixed(2)}</span></div>
-                          <p>{chunk.content}</p>
-                          <div className="chunk-source">Source file · {chunk.source_file_id} · chunk {chunk.chunk_index}</div>
-                        </article>)}</div> : <div className="no-results"><strong>No matching passages found</strong><span>Try a different question or add another document to this workspace.</span></div>}
-                      </section>}
-
                       {!message.busy && <section className={`answer-panel ${message.error ? 'answer-unavailable' : ''}`}>
                         <div className="section-title"><h3>Answer</h3><span>{message.answer ? 'Generated' : 'Not generated'}</span></div>
                         {message.answer ? <p className="answer-copy">{message.answer}</p> : <div className="answer-empty-state"><span className="answer-empty-mark">i</span><div><strong>{message.error ? 'No answer available' : 'No answer generated'}</strong><p>{message.error ? 'The search did not finish, so there is no result to summarize.' : 'The search finished, but no response could be derived from the provided evidence.'}</p></div></div>}
                       </section>}
 
+                      {message.resultsReceived && <section className="response-section evidence-section">
+                        <div className="section-title"><h3>Supporting information</h3><span>{message.chunks.length} {message.chunks.length === 1 ? 'passage' : 'passages'}</span></div>
+                        {message.chunks.length > 0 ? <div className="retrieved-chunks">{message.chunks.map((chunk) => <article className="retrieved-chunk" key={chunk.chunk_id}>
+                          <div className="chunk-heading"><span className="chunk-file"><Icon name="file" size={15} />{chunk.file_name}</span></div>
+                          <p>{chunk.content}</p>
+                          <details className="chunk-source"><summary>Technical source details</summary>Match {Number(chunk.similarity || 0).toFixed(2)} · Source file {chunk.source_file_id} · passage {chunk.chunk_index}</details>
+                        </article>)}</div> : <div className="no-results"><strong>No matching passages found</strong><span>Try a different question or add another document to this workspace.</span></div>}
+                      </section>}
+
                       {!message.busy && message.proposals && message.proposals.length > 0 && (
                         <section className="answer-panel" style={{ marginTop: "12px", borderLeft: "3px solid #3b82f6" }}>
                           <div className="section-title">
-                            <h3>Proposed Agentic Actions</h3>
-                            <span style={{ color: "#2563eb", fontWeight: 600 }}>{message.proposals.length} Actionable</span>
+                            <h3>Suggested actions</h3>
+                            <span style={{ color: "#2563eb", fontWeight: 600 }}>{message.proposals.length} suggestions</span>
                           </div>
                           <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginTop: "8px" }}>
                             {message.proposals.map((prop, pIdx) => (
@@ -870,15 +757,14 @@ function App() {
                                     </button>
                                   )}
                                   {prop.action_type === "generate_pdf" && (
-                                    <a
-                                      href={prop.payload?.download_url || "/api/actions/generate-letter-pdf"}
-                                      target="_blank"
-                                      rel="noreferrer"
+                                    <button
+                                      type="button"
+                                      onClick={() => downloadNotice(prop)}
                                       className="theme-button"
                                       style={{ padding: "4px 10px", fontSize: "11px", textDecoration: "none", background: "#059669", color: "#ffffff" }}
                                     >
                                       Download Notice PDF
-                                    </a>
+                                    </button>
                                   )}
                                 </div>
                                 <p style={{ fontSize: "12px", margin: "6px 0 0", color: "#475569" }}>{prop.description}</p>
@@ -900,11 +786,11 @@ function App() {
           {attachedFiles.length > 0 && <div className="attachment-list">{attachedFiles.map((file, index) => <span className="attachment-chip" key={`${file.name}-${index}`}><Icon name="file" size={13} />{file.name}<button type="button" onClick={() => setAttachedFiles((current) => current.filter((_, itemIndex) => itemIndex !== index))} aria-label={`Remove ${file.name}`}>×</button></span>)}</div>}
           <form className="composer" onSubmit={(event) => { event.preventDefault(); sendMessage() }}>
             <textarea value={draft} disabled={isBusy} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); sendMessage() } }} rows={1} aria-label="Message" placeholder="Ask about an invoice, payment, or expense…" />
-            <div className="composer-bottom">{['administrator', 'auditor'].includes(profile.role) && <><button type="button" className="attach-button" disabled={isBusy} onClick={() => fileInput.current?.click()}><Icon name="attach" size={16} /><span>Attach files</span></button><input ref={fileInput} type="file" hidden multiple accept=".pdf,.png,.jpg,.jpeg,.webp,.tif,.tiff,.txt,.xlsx,.xlsm,.wav,.mp3,.ogg,.flac,.aiff,.aif" onChange={handleFiles} /></>}<div className="composer-controls"><span className="enter-hint">Enter to send</span><button className="send-button" type="submit" disabled={!draft.trim() || isBusy}><span>{isBusy ? 'Working…' : 'Send'}</span><Icon name="send" size={14} /></button></div></div>
+            <div className="composer-bottom"><button type="button" className="attach-button" disabled={isBusy} onClick={() => fileInput.current?.click()}><Icon name="attach" size={16} /><span>Attach files</span></button><input ref={fileInput} type="file" hidden multiple accept=".pdf,.png,.jpg,.jpeg,.webp,.tif,.tiff,.txt,.xlsx,.xlsm,.wav,.mp3,.ogg,.flac,.aiff,.aif" onChange={handleFiles} /><div className="composer-controls"><span className="enter-hint">Enter to send</span><button className="send-button" type="submit" disabled={!draft.trim() || isBusy}><span>{isBusy ? 'Working…' : 'Send'}</span><Icon name="send" size={14} /></button></div></div>
           </form>
-          <div className="composer-note">Files are parsed and saved · Queries are audited dynamically by the LLM cascade decision maker</div>
+          <div className="composer-note">Your questions use your company’s saved records. Review the sources before making a decision.</div>
         </div>
-        </> : activeView === 'users' && profile.role === 'administrator' ? <AdminUsers /> : <AuditWorkspace page={activeView} role={profile.role} onOpenSearch={() => setActiveView('search')} />}
+        </> : <CompanyWorkspace page={activeView} navigate={setActiveView} onAskDocument={(file) => { setDraft(`What can you tell me about ${file.file_name}?`); setActiveView('search') }} openEmail={() => setConnectorModalOpen(true)} openPos={() => setPosModalOpen(true)} openMenu={() => setSidebarOpen(true)} />}
       </main>
 
       {connectorModalOpen && (
@@ -973,14 +859,14 @@ function App() {
                       <Icon name="refresh" size={15} />
                       <span>{isSyncing ? 'Syncing Invoices…' : 'Sync Mailbox Now'}</span>
                     </button>
-                    <button
+                    {profile.role === 'administrator' && <button
                       type="button"
                       className="btn-danger"
                       onClick={handleRevoke}
                       disabled={isSyncing}
                     >
                       Revoke Access
-                    </button>
+                    </button>}
                   </div>
 
                   {connectorStatus.recent_items && connectorStatus.recent_items.length > 0 && (
@@ -1010,6 +896,8 @@ function App() {
                     </div>
                   )}
                 </div>
+              ) : profile.role !== 'administrator' ? (
+                <p>Only a Company Admin can authorize the email connector.</p>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                   <div className="connector-tabs">
@@ -1284,13 +1172,13 @@ function App() {
                       <Icon name="refresh" size={15} />
                       <span>{isSyncingPOSBatch ? 'Syncing Register…' : 'Sync Daily Sales Register'}</span>
                     </button>
-                    <button
+                    {profile.role === 'administrator' && <button
                       type="button"
                       className="btn-danger"
                       onClick={handleRevokePOS}
                     >
                       Disconnect POS
-                    </button>
+                    </button>}
                   </div>
 
                   {/* Recently Ingested Bills */}
@@ -1329,6 +1217,8 @@ function App() {
                     </div>
                   )}
                 </div>
+              ) : profile.role !== 'administrator' ? (
+                <p>Only a Company Admin can authorize the POS connector.</p>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                   <div className="connector-tabs">
@@ -1460,6 +1350,14 @@ function App() {
       {notice && <div className="toast" role="status">{notice}</div>}
     </div>
   )
+}
+
+function App() {
+  const { loading, session, profile } = useAuth()
+  if (loading) return <AuthLoadingScreen />
+  if (!session) return <SignInScreen />
+  if (!profile) return <ProfileAccessScreen />
+  return profile.role === 'superadmin' ? <PlatformDashboard /> : <Workspace />
 }
 
 export default App

@@ -83,14 +83,12 @@ def _normalise_gstin(value: str | None) -> str | None:
 def _sync_business_profile(supabase: Client, business_id: str, evidence: Any) -> None:
     """Fill missing business identity fields from the document's seller details."""
     seller_gstin = _normalise_gstin(getattr(evidence, "seller_gstin", None))
-    seller_name = getattr(evidence, "seller_name", None) or getattr(evidence, "party_name", None)
     seller_pan = getattr(evidence, "seller_pan", None)
     seller_address = getattr(evidence, "seller_address", None)
     currency = getattr(evidence, "currency", None)
 
+    # The company name is set at registration; a document's seller must not rename the tenant.
     profile: dict[str, Any] = {}
-    if seller_name:
-        profile["business_name"] = str(seller_name).strip()
     if seller_gstin:
         profile["gstin"] = seller_gstin
         profile["state_code"] = seller_gstin[:2]
@@ -159,10 +157,12 @@ def _database_date(value: str | None) -> str | None:
         "%Y-%m-%d",
         "%d/%m/%Y",
         "%d-%m-%Y",
+        "%d.%m.%Y",
         "%m/%d/%Y",
         "%d/%m/%y",
         "%d-%m-%y",
         "%Y/%m/%d",
+        "%Y.%m.%d",
         "%B %d, %Y",
         "%B %d %Y",
         "%b %d, %Y",
@@ -175,17 +175,6 @@ def _database_date(value: str | None) -> str | None:
             return datetime.strptime(cleaned_no_ordinal, pattern).date().isoformat()
         except ValueError:
             continue
-    # Month + Day without year: default to current year
-    for pattern in ("%B %d", "%b %d", "%d %B", "%d %b"):
-        try:
-            dt = datetime.strptime(cleaned_no_ordinal, pattern)
-            return dt.replace(year=datetime.now().year).date().isoformat()
-        except ValueError:
-            continue
-
-    match = re.search(r"\b\d{4}-\d{2}-\d{2}\b", value)
-    if match:
-        return match.group(0)
     return None
 
 
@@ -196,7 +185,7 @@ def _insert_invoice_records(
     evidence: Any,
 ) -> dict[str, str]:
     """Insert invoice header, extraction run, item rows, and field provenance."""
-    invoice_date = _database_date(getattr(evidence, "invoice_date", None) or evidence.date)
+    invoice_date = _database_date(getattr(evidence, "invoice_date", None))
     invoice_total = getattr(evidence, "invoice_total", None) or evidence.amount
     invoice_row = {
         "business_id": business_id,
