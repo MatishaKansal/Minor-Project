@@ -12,6 +12,7 @@ from backend.cascade.gate import ConservativeEscalationGate
 from backend.cascade.judge import call_runtime_judge, combine_verifications
 from backend.cascade.router import Phase4CascadeRouter
 from backend.cascade.runner import call_tier_model_detailed
+from backend.cascade.formatting import format_answer
 from backend.cascade.signals import extract_signals, signal_vector
 from backend.cascade.verifier import verify_runtime
 from backend.schemas.evidence import Evidence
@@ -25,6 +26,8 @@ def evidence_to_cascade_dict(
     evidence_list: List[Evidence],
     retrieved_chunks: Optional[List[Dict[str, Any]]] = None,
     business_metadata: Optional[Dict[str, Any]] = None,
+    existing_invoices: Optional[List[Dict[str, Any]]] = None,
+    existing_payments: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """
     Transform live multimodal Evidence models and retrieved RAG chunks into the
@@ -85,6 +88,30 @@ def evidence_to_cascade_dict(
                 "similarity": ch.get("similarity"),
                 "file_name": ch.get("file_name"),
             })
+
+    if existing_invoices:
+        seen_numbers = {inv.get("invoice_number") for inv in invoices if inv.get("invoice_number")}
+        for ei in existing_invoices:
+            num = ei.get("invoice_number")
+            if not num or num not in seen_numbers:
+                invoices.append(ei)
+                if num:
+                    seen_numbers.add(num)
+
+    if existing_payments:
+        payments.extend(existing_payments)
+
+    if existing_invoices:
+        seen_numbers = {inv.get("invoice_number") for inv in invoices if inv.get("invoice_number")}
+        for ei in existing_invoices:
+            num = ei.get("invoice_number")
+            if not num or num not in seen_numbers:
+                invoices.append(ei)
+                if num:
+                    seen_numbers.add(num)
+
+    if existing_payments:
+        payments.extend(existing_payments)
 
     primary_invoice = invoices[0] if invoices else {}
 
@@ -218,7 +245,8 @@ class CascadeDecisionMaker:
 
         return {
             "query": query,
-            "answer": chosen["response"],
+            "raw_answer": chosen["response"],
+            "answer": format_answer(chosen["response"]),
             "stopped_tier": stopped_tier,
             "stopped_model": chosen["model"],
             "stop_probability": stop_probability,

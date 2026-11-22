@@ -112,52 +112,64 @@ def extract_evidence_numbers_and_derivations(evidence: Dict[str, Any], query: st
         "discrepancy_amount": None,
     }
 
+    def safe_float(v):
+        if v is None:
+            return None
+        try:
+            return float(str(v).replace(',', '').strip())
+        except (ValueError, TypeError):
+            return None
+
     # Extract numbers from structured invoice
     inv = evidence.get("invoice", {})
     if inv:
         if "subtotal" in inv and inv["subtotal"] is not None:
-            val = float(inv["subtotal"])
-            evidence_nums.add(val)
-            metadata["subtotal"] = val
+            val = safe_float(inv["subtotal"])
+            if val is not None:
+                evidence_nums.add(val)
+                metadata["subtotal"] = val
         if "tax_amount" in inv and inv["tax_amount"] is not None:
-            val = float(inv["tax_amount"])
-            evidence_nums.add(val)
-            metadata["tax_amount"] = val
+            val = safe_float(inv["tax_amount"])
+            if val is not None:
+                evidence_nums.add(val)
+                metadata["tax_amount"] = val
         if "invoice_total" in inv and inv["invoice_total"] is not None:
-            val = float(inv["invoice_total"])
-            evidence_nums.add(val)
-            metadata["invoice_total"] = val
+            val = safe_float(inv["invoice_total"])
+            if val is not None:
+                evidence_nums.add(val)
+                metadata["invoice_total"] = val
         if "tax_rate" in inv and inv["tax_rate"] is not None:
-            val = float(inv["tax_rate"])
-            evidence_nums.add(val)
-            metadata["tax_rate"] = val
+            val = safe_float(inv["tax_rate"])
+            if val is not None:
+                evidence_nums.add(val)
+                metadata["tax_rate"] = val
 
         for item in inv.get("line_items", []):
             for field in ["unit_price", "quantity", "line_total", "tax_rate", "discount"]:
                 if field in item and item[field] is not None:
-                    try:
-                        v = float(item[field])
+                    v = safe_float(item[field])
+                    if v is not None:
                         evidence_nums.add(v)
                         if field == "line_total":
                             metadata["line_item_sum"] += v
-                    except (ValueError, TypeError):
-                        pass
 
     # Extract numbers from purchase orders / payments
     po = evidence.get("purchase_order", {})
     if po and "total_amount" in po and po["total_amount"] is not None:
-        val = float(po["total_amount"])
-        evidence_nums.add(val)
-        metadata["po_total"] = val
+        val = safe_float(po["total_amount"])
+        if val is not None:
+            evidence_nums.add(val)
+            metadata["po_total"] = val
 
     payments = evidence.get("payments", [])
     if payments:
         p_total = 0.0
         for p in payments:
             if "amount" in p and p["amount"] is not None:
-                amt = float(p["amount"])
-                evidence_nums.add(amt)
-                p_total += amt
+                amt = safe_float(p["amount"])
+                if amt is not None:
+                    evidence_nums.add(amt)
+                    p_total += amt
         metadata["payment_total"] = p_total
 
     # Extract numbers from raw text in provenance and document chunks

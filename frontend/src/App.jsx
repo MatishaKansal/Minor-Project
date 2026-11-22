@@ -39,13 +39,26 @@ function Icon({ name, size = 17 }) {
   )
 }
 
+function formatTierName(tier) {
+  const map = {
+    layer_1: 'Tier 1 (Deterministic Key Hash)',
+    layer_2: 'Tier 2 (SLM Narration Matcher)',
+    layer_3: 'Tier 3 (Multi-Source Reasoning LLM)',
+    layer_4: 'Tier 4 (Frontier Compliance Auditor)',
+  }
+  return map[tier] || tier || 'Cascade Tier'
+}
+
 function formatActivityStep(message) {
   if (message.includes('question is received')) return 'Question received'
   if (message.includes('Parsing and saving your files')) return 'Preparing uploaded files'
   const fileMatch = message.match(/Parsing, saving and indexing (.+?)(?:…|\.\.\.)?$/)
   if (fileMatch) return `Processing ${fileMatch[1]}`
   if (message.includes('Finding document chunks')) return 'Searching saved documents'
-  return 'Preparing document search'
+  if (message.includes('cascade decision maker') || message.includes('Evaluating evidence')) return 'Evaluating with 4-tier LLM Cascade'
+  if (message.includes('Synthesizing agentic action proposals') || message.includes('action proposals')) return 'Synthesizing agentic actions'
+  if (message.includes('decision reached') || message.includes('Cascade decision reached')) return 'Finalizing cascade decision'
+  return 'Processing audit request'
 }
 
 function Workspace() {
@@ -64,7 +77,13 @@ function Workspace() {
     }
   };
   const { loading: authLoading, session, profile, signOut, apiFetch } = useAuth()
-  const [activeView, setActiveView] = useState('overview')
+  const [activeView, setActiveView] = useState(() => {
+    try { return localStorage.getItem('ledgerline-active-view') || 'overview' } catch { return 'overview' }
+  })
+  const handleSelectView = (view) => {
+    setActiveView(view)
+    try { localStorage.setItem('ledgerline-active-view', view) } catch {}
+  }
   const [messages, setMessages] = useState([])
   const [draft, setDraft] = useState('')
   const [attachedFiles, setAttachedFiles] = useState([])
@@ -120,7 +139,7 @@ function Workspace() {
 
   function startNewChat() {
     if (isBusy) return
-    setActiveView('search')
+    handleSelectView('search')
     setMessages([])
     setDraft('')
     setAttachedFiles([])
@@ -515,11 +534,17 @@ function Workspace() {
 
         if (event.type === 'status') {
           if (event.done) {
+            const hasIssue = event.message && (event.message.includes('encountered an issue') || event.message.includes('failed'));
             updateAssistant((message) => ({
               busy: false,
               searchComplete: true,
-              activityExpanded: false,
-              activity: message.activity.map((step) => ({ ...step, state: 'done' })),
+              activityExpanded: Boolean(hasIssue),
+              status: hasIssue ? event.message : message.status,
+              error: Boolean(hasIssue || message.error),
+              activity: message.activity.map((step) => ({
+                ...step,
+                state: (hasIssue && step.state === 'active') ? 'failed' : 'done',
+              })),
             }))
             setIsBusy(false)
           } else {
@@ -557,7 +582,9 @@ function Workspace() {
             answer: event.llm_called && event.answer ? event.answer : '',
             stoppedTier: event.stopped_tier,
             stoppedModel: event.stopped_model,
+            stopProbability: event.stop_probability,
             tierHistory: event.tier_history || [],
+            isMock: event.is_mock,
             proposals: event.proposals || [],
             resultsReceived: true,
           })
@@ -640,7 +667,7 @@ function Workspace() {
           <div className="section-heading">YOUR WORKSPACE</div>
           <nav className="workspace-nav" aria-label="Company navigation">
             {[['overview', 'Overview'], ['documents', 'My Documents'], ['transactions', 'Transactions'], ['checks', 'Financial Checks'], ['reports', 'Reports'], ['reconciliation', 'Reconciliation'], ['search', 'Financial Assistant'], ['settings', 'Company Settings']].map(([view, label]) => (
-              <button key={view} className={`workspace-nav-item ${activeView === view ? 'is-selected' : ''}`} onClick={() => { setActiveView(view); setSidebarOpen(false) }}>
+              <button key={view} className={`workspace-nav-item ${activeView === view ? 'is-selected' : ''}`} onClick={() => { handleSelectView(view); setSidebarOpen(false) }}>
                 <span className="nav-indicator" />{label}
               </button>
             ))}
@@ -718,8 +745,48 @@ function Workspace() {
                       </section>}
 
                       {!message.busy && <section className={`answer-panel ${message.error ? 'answer-unavailable' : ''}`}>
-                        <div className="section-title"><h3>Answer</h3><span>{message.answer ? 'Generated' : 'Not generated'}</span></div>
-                        {message.answer ? <p className="answer-copy">{message.answer}</p> : <div className="answer-empty-state"><span className="answer-empty-mark">i</span><div><strong>{message.error ? 'No answer available' : 'No answer generated'}</strong><p>{message.error ? 'The search did not finish, so there is no result to summarize.' : 'The search finished, but no response could be derived from the provided evidence.'}</p></div></div>}
+                        <div className="section-title">
+                          <h3>Answer</h3>
+                          {message.stoppedTier ? (
+                            <span className="cascade-tier-pill" style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                              ⚡ {formatTierName(message.stoppedTier)}
+                              {typeof message.stopProbability === 'number' ? ` (${Math.round(message.stopProbability * 100)}% confidence)` : ''}
+                            </span>
+                          ) : (
+                            <span>{message.answer ? 'Generated' : 'Not generated'}</span>
+                          )}
+                        </div>
+
+                        {message.tierHistory && message.tierHistory.length > 0 && (
+                          <div style={{ display: 'flex', gap: '6px', margin: '8px 0 12px', flexWrap: 'wrap', alignItems: 'center' }}>
+                            <span style={{ fontSize: '11px', color: 'var(--quiet, #64748b)', fontWeight: 600 }}>Cascade Evaluation:</span>
+                            {message.tierHistory.map((th, thIdx) => {
+                              const isChosen = th.tier === message.stoppedTier
+                              return (
+                                <div
+                                  key={thIdx}
+                                  style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '5px',
+                                    fontSize: '11px',
+                                    padding: '3px 8px',
+                                    borderRadius: '5px',
+                                    background: isChosen ? 'rgba(59, 130, 246, 0.12)' : 'rgba(0, 0, 0, 0.04)',
+                                    border: isChosen ? '1px solid #3b82f6' : '1px solid var(--line, #e2e8f0)',
+                                    fontWeight: isChosen ? 600 : 400,
+                                    color: isChosen ? '#1d4ed8' : 'var(--muted, #64748b)',
+                                  }}
+                                >
+                                  <span>{isChosen ? '✓ ' : '→ '}{formatTierName(th.tier)}</span>
+                                  {th.latency_ms ? <span style={{ fontSize: '10px', opacity: 0.75 }}>({th.latency_ms}ms)</span> : null}
+                                </div>
+                              )
+                            })}
+                          </div>
+                        )}
+
+                        {message.answer ? <div className="answer-copy" style={{ whiteSpace: 'pre-line', lineHeight: '1.6' }}>{message.answer}</div> : <div className="answer-empty-state"><span className="answer-empty-mark">i</span><div><strong>{message.error ? 'No answer available' : 'No answer generated'}</strong><p>{message.error ? 'The search did not finish, so there is no result to summarize.' : 'The search finished, but no response could be derived from the provided evidence.'}</p></div></div>}
                       </section>}
 
                       {message.resultsReceived && <section className="response-section evidence-section">
@@ -786,7 +853,7 @@ function Workspace() {
           </form>
           <div className="composer-note">Your questions use your company’s saved records. Review the sources before making a decision.</div>
         </div>
-        </> : <CompanyWorkspace page={activeView} navigate={setActiveView} onAskDocument={(file) => { setDraft(`What can you tell me about ${file.file_name}?`); setActiveView('search') }} openEmail={() => setConnectorModalOpen(true)} openPos={() => setPosModalOpen(true)} openMenu={() => setSidebarOpen(true)} />}
+        </> : <CompanyWorkspace page={activeView} navigate={handleSelectView} onAskDocument={(file) => { setDraft(`What can you tell me about ${file.file_name}?`); setActiveView('search') }} openEmail={() => setConnectorModalOpen(true)} openPos={() => setPosModalOpen(true)} openMenu={() => setSidebarOpen(true)} />}
       </main>
 
       {connectorModalOpen && (

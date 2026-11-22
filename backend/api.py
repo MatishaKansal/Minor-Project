@@ -526,10 +526,30 @@ async def query_documents(
 
         yield _event("status", message="Evaluating evidence through the 4-tier LLM cascade decision maker…")
         try:
+            # Load company persisted records to empower cascade with existing company context
+            company_invoices = []
+            company_payments = []
+            try:
+                from backend.auth import get_authenticated_database_client
+                db_client = get_authenticated_database_client()
+                biz_id = current_user.company_id()
+                db_invoices = db_client.table("invoice").select(
+                    "invoice_id,invoice_number,seller_name,invoice_total,currency,invoice_date,due_date,buyer_name,reverse_charge,subtotal,cgst_total,sgst_total,igst_total,discount_amount"
+                ).eq("business_id", biz_id).limit(200).execute().data or []
+                company_invoices.extend(db_invoices)
+            except Exception as exc:
+                LOGGER.warning("Could not load database invoices for cascade: %s", exc)
+
+            for record in _recent_audits(current_user).values():
+                ev = record.get("evidence", {})
+                company_payments.extend(ev.get("payments", []))
+
             # Transform extracted multimodal evidence and retrieved RAG context into cascade input
             cascade_evidence = evidence_to_cascade_dict(
                 evidence_list=parsed_evidence_list,
                 retrieved_chunks=retrieved_chunks,
+                existing_invoices=company_invoices,
+                existing_payments=company_payments,
             )
 
             # Execute the cascade with learned stop routing

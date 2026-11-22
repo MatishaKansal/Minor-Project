@@ -71,15 +71,23 @@ export function AuthProvider({ children }) {
     return response
   }, [])
 
+  const userId = session?.user?.id
+
   useEffect(() => {
     let active = true
-    if (!session) {
+    if (!userId) {
       setProfile(null)
       setProfileError('')
       setProfileLoading(false)
       return () => { active = false }
     }
-    setProfile(null)
+
+    // Do not wipe profile or trigger full-screen loading on tab-switch / token refresh
+    // if the profile is already loaded for the current authenticated user.
+    if (profile && profile.user_id === userId) {
+      return () => { active = false }
+    }
+
     setProfileError('')
     setProfileLoading(true)
     apiFetch('/api/auth/me')
@@ -95,7 +103,7 @@ export function AuthProvider({ children }) {
         if (active) setProfileLoading(false)
       })
     return () => { active = false }
-  }, [session, apiFetch])
+  }, [userId, apiFetch, profile])
 
   const signIn = useCallback(async (username, password) => {
     if (!supabase) throw new Error('Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to enable Supabase Auth.')
