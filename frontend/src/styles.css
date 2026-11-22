@@ -488,3 +488,351 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid #8892ab; outli
   background: color-mix(in srgb, #ce7373 20%, transparent);
 }
 
+/* =========================================================
+   Financial Assistant: Notebooks / Chat History Dropdown
+   ========================================================= */
+
+.history-dropdown-anchor {
+  position: relative;
+  display: inline-flex;
+}
+
+.history-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.history-toggle-btn.is-active,
+.history-toggle-btn:hover {
+  background: var(--surface-raised);
+  border-color: #93c5fd;
+  color: #1e40af;
+}
+
+.history-count-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  background: #dbeafe;
+  color: #1d4ed8;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 9px;
+  line-height: 1;
+}
+
+.history-arrow-indicator {
+  font-size: 10px;
+  margin-left: 2px;
+  color: var(--quiet);
+  transition: transform 0.2s ease;
+}
+
+.history-arrow-indicator.is-open {
+  transform: rotate(180deg);
+}
+
+.history-dropdown-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 360px;
+  max-width: 90vw;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.12), 0 8px 10px -6px rgba(15, 23, 42, 0.08);
+  z-index: 1000;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  animation: historyDropdownFade 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes historyDropdownFade {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.history-dropdown-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid #f1f5f9;
+  background: #f8fafc;
+}
+
+.history-header-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #1e293b;
+  font-weight: 700;
+}
+
+.history-new-nb-btn {
+  background: #2563eb;
+  color: #ffffff;
+  border: 0;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: background 0.15s;
+}
+
+.history-new-nb-btn:hover {
+  background: #1d4ed8;
+}
+
+.history-search-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #f1f5f9;
+  background: #ffffff;
+}
+
+.history-search-row svg {
+  color: #94a3b8;
+  flex-shrink: 0;
+}
+
+.history-search-row input {
+  border: 0;
+  outline: none;
+  width: 100%;
+  font-size: 12px;
+  color: #1e293b;
+  background: transparent;
+}
+
+.history-search-row input::placeholder {
+  color: #94a3b8;
+}
+
+.search-clear-btn {
+  background: transparent;
+  border: 0;
+  color: #94a3b8;
+  font-size: 15px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+.history-notebooks-list {
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
+
+.history-notebook-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  border: 1px solid transparent;
+  background: #ffffff;
+}
+
+.history-notebook-item:hover {
+  background: #f8fafc;
+  border-color: #e2e8f0;
+}
+
+.history-notebook-item.is-current {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+}
+
+.history-item-content {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  overflow: hidden;
+  flex: 1;
+  min-width: 0;
+  padding-right: 8px;
+}
+
+.history-item-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.history-item-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #1e293b;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.history-notebook-item.is-current .history-item-title {
+  color: #1e40af;
+}
+
+.current-badge {
+  font-size: 9.5px;
+  font-weight: 700;
+  background: #2563eb;
+  color: #ffffff;
+  padding: 1px 5px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.history-item-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #64748b;
+}
+
+.meta-dot {
+  color: #cbd5e1;
+}
+
+.history-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.history-notebook-item:hover .history-item-actions {
+  opacity: 1;
+}
+
+.history-item-btn {
+  background: transparent;
+  border: 0;
+  color: #94a3b8;
+  padding: 5px;
+  border-radius: 5px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+}
+
+.history-item-btn:hover {
+  color: #1e293b;
+  background: #e2e8f0;
+}
+
+.history-item-btn.delete:hover {
+  color: #dc2626;
+  background: #fee2e2;
+}
+
+.history-dropdown-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px;
+  border-top: 1px solid #f1f5f9;
+  background: #f8fafc;
+  font-size: 11px;
+  color: #64748b;
+}
+
+.history-clear-all {
+  background: transparent;
+  border: 0;
+  color: #dc2626;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.history-clear-all:hover {
+  text-decoration: underline;
+}
+
+.history-empty-state {
+  padding: 28px 16px;
+  text-align: center;
+  color: #64748b;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.history-empty-state .empty-icon {
+  font-size: 24px;
+  margin-bottom: 4px;
+}
+
+.history-empty-state p {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.history-empty-state small {
+  font-size: 11.5px;
+  color: #94a3b8;
+  line-height: 1.4;
+  max-width: 240px;
+}
+
+.current-notebook-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 8px;
+  padding: 2px 8px;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  color: #1e40af;
+  border-radius: 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  vertical-align: middle;
+  max-width: 260px;
+}
+
+.current-notebook-tag span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+

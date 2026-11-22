@@ -30,6 +30,11 @@ function Icon({ name, size = 17 }) {
     cart: <><circle cx="8" cy="21" r="1" /><circle cx="19" cy="21" r="1" /><path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12" /></>,
     barcode: <><path d="M3 5v14M8 5v14M12 5v14M17 5v14M21 5v14M6 5v14M15 5v14" /></>,
     store: <><path d="m2 7 4.41-4.41A2 2 0 0 1 7.83 2h8.34a2 2 0 0 1 1.42.59L22 7" /><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8" /><path d="M15 22v-4a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2v4" /><path d="M2 7h20" /></>,
+    history: <><circle cx="12" cy="12" r="9" /><polyline points="12 7 12 12 15 15" /></>,
+    book: <><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" /><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" /></>,
+    search: <><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></>,
+    trash: <><polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></>,
+    edit: <><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></>,
   }
 
   return (
@@ -59,6 +64,25 @@ function formatActivityStep(message) {
   if (message.includes('Synthesizing agentic action proposals') || message.includes('action proposals')) return 'Synthesizing agentic actions'
   if (message.includes('decision reached') || message.includes('Cascade decision reached')) return 'Finalizing cascade decision'
   return 'Processing audit request'
+}
+
+function formatNotebookTime(iso) {
+  if (!iso) return ''
+  try {
+    const d = new Date(iso)
+    const now = new Date()
+    const diffMs = now - d
+    const diffMins = Math.floor(diffMs / 60000)
+    if (diffMins < 1) return 'Just now'
+    if (diffMins < 60) return `${diffMins}m ago`
+    const diffHours = Math.floor(diffMins / 60)
+    if (diffHours < 24) return `${diffHours}h ago`
+    const diffDays = Math.floor(diffHours / 24)
+    if (diffDays < 7) return `${diffDays}d ago`
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+  } catch {
+    return ''
+  }
 }
 
 function Workspace() {
@@ -137,14 +161,141 @@ function Workspace() {
     noticeTimer.current = window.setTimeout(() => setNotice(''), 2400)
   }
 
+  // Notebooks / Chat History Persistence & Management
+  const [notebooks, setNotebooks] = useState([])
+  const [currentNotebookId, setCurrentNotebookId] = useState(null)
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [notebookSearch, setNotebookSearch] = useState('')
+  const historyDropdownRef = useRef(null)
+  const storageKey = `ledgerline_notebooks_${profile?.business_id || profile?.user_id || 'default'}`
+
+  // Load saved notebooks on profile change
+  useEffect(() => {
+    if (!profile) return
+    try {
+      const raw = localStorage.getItem(storageKey)
+      if (raw) {
+        const parsed = JSON.parse(raw)
+        if (Array.isArray(parsed)) {
+          setNotebooks(parsed)
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to parse saved notebooks', e)
+    }
+  }, [profile?.business_id, profile?.user_id, storageKey])
+
+  // Save notebooks to localStorage
+  useEffect(() => {
+    if (!profile) return
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(notebooks))
+    } catch (e) {
+      console.warn('Failed to save notebooks to localStorage', e)
+    }
+  }, [notebooks, profile, storageKey])
+
+  // Sync active notebook messages
+  useEffect(() => {
+    if (!currentNotebookId || messages.length === 0) return
+    setNotebooks((prev) => {
+      const target = prev.find((nb) => nb.id === currentNotebookId)
+      if (!target || target.messages === messages) return prev
+      return prev.map((nb) =>
+        nb.id === currentNotebookId
+          ? {
+              ...nb,
+              messages,
+              messageCount: messages.length,
+              updatedAt: new Date().toISOString(),
+            }
+          : nb
+      )
+    })
+  }, [messages, currentNotebookId])
+
+  // Click outside and Escape handler for history dropdown
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (historyDropdownRef.current && !historyDropdownRef.current.contains(event.target)) {
+        setHistoryOpen(false)
+      }
+    }
+    function handleKeyDown(event) {
+      if (event.key === 'Escape') {
+        setHistoryOpen(false)
+      }
+    }
+    if (historyOpen) {
+      document.addEventListener('mousedown', handleClickOutside)
+      document.addEventListener('keydown', handleKeyDown)
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [historyOpen])
+
   function startNewChat() {
     if (isBusy) return
     handleSelectView('search')
+    setCurrentNotebookId(null)
     setMessages([])
     setDraft('')
     setAttachedFiles([])
     setSidebarOpen(false)
+    setHistoryOpen(false)
   }
+
+  function selectNotebook(nb) {
+    if (isBusy) return
+    handleSelectView('search')
+    setCurrentNotebookId(nb.id)
+    setMessages(nb.messages || [])
+    setDraft('')
+    setAttachedFiles([])
+    setHistoryOpen(false)
+  }
+
+  function deleteNotebook(e, id) {
+    e.stopPropagation()
+    setNotebooks((prev) => prev.filter((nb) => nb.id !== id))
+    if (currentNotebookId === id) {
+      setCurrentNotebookId(null)
+      setMessages([])
+    }
+    showNotice('Notebook deleted')
+  }
+
+  function renameNotebook(e, id, currentTitle) {
+    e.stopPropagation()
+    const newTitle = window.prompt('Rename notebook:', currentTitle)
+    if (newTitle && newTitle.trim() && newTitle.trim() !== currentTitle) {
+      setNotebooks((prev) =>
+        prev.map((nb) => (nb.id === id ? { ...nb, title: newTitle.trim() } : nb))
+      )
+      showNotice('Notebook renamed')
+    }
+  }
+
+  function clearAllNotebooks() {
+    if (window.confirm('Are you sure you want to delete all saved notebooks?')) {
+      setNotebooks([])
+      setCurrentNotebookId(null)
+      setMessages([])
+      setHistoryOpen(false)
+      showNotice('All notebooks cleared')
+    }
+  }
+
+  const currentNotebook = notebooks.find((nb) => nb.id === currentNotebookId)
+  const filteredNotebooks = notebooks.filter((nb) => {
+    if (!notebookSearch.trim()) return true
+    const q = notebookSearch.toLowerCase()
+    if (nb.title?.toLowerCase().includes(q)) return true
+    if (nb.messages?.some((m) => (m.text && m.text.toLowerCase().includes(q)) || (m.answer && m.answer.toLowerCase().includes(q)))) return true
+    return false
+  })
 
   // Email Ingestion Connector State & Handlers
   const [connectorStatus, setConnectorStatus] = useState({
@@ -497,6 +648,28 @@ function Workspace() {
     const fileNames = files.map((file) => file.name)
     const assistantId = `assistant-${Date.now()}-${Math.random().toString(16).slice(2)}`
 
+    // Ensure we have an active notebook or create one
+    let activeId = currentNotebookId
+    if (!activeId) {
+      activeId = `nb-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`
+      const titleSnippet = question.length > 40 ? question.slice(0, 40) + '…' : question
+      const initialMessages = [
+        ...messages,
+        { id: `user-${assistantId}`, role: 'user', text: question, files: fileNames },
+        { id: assistantId, role: 'assistant', busy: true, status: '', activityExpanded: false, activity: [], chunks: [], warnings: [], files: [], resultsReceived: false },
+      ]
+      const newNotebook = {
+        id: activeId,
+        title: titleSnippet,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        messages: initialMessages,
+        messageCount: initialMessages.length,
+      }
+      setCurrentNotebookId(activeId)
+      setNotebooks((prev) => [newNotebook, ...prev])
+    }
+
     setMessages((current) => [
       ...current,
       { id: `user-${assistantId}`, role: 'user', text: question, files: fileNames },
@@ -685,10 +858,145 @@ function Workspace() {
         <header className="topbar">
           <div className="case-heading">
             <button className="icon-button mobile-menu-button" onClick={() => setSidebarOpen(true)} aria-label="Open menu"><Icon name="menu" /></button>
-            <div><div className="case-title">Financial Assistant</div><div className="case-subtitle">Ask questions about your company’s records</div></div>
+            <div>
+              <div className="case-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span>Financial Assistant</span>
+                {currentNotebook && (
+                  <span className="current-notebook-tag" title={currentNotebook.title}>
+                    <Icon name="book" size={13} />
+                    <span>{currentNotebook.title}</span>
+                  </span>
+                )}
+              </div>
+              <div className="case-subtitle">Ask questions about your company’s records</div>
+            </div>
           </div>
           <div className="topbar-actions">
-            <button className="case-details" onClick={startNewChat} disabled={isBusy}>New conversation</button>
+            <button className="case-details" onClick={startNewChat} disabled={isBusy}>
+              <Icon name="plus" size={14} />
+              <span>New conversation</span>
+            </button>
+
+            <div className="history-dropdown-anchor" ref={historyDropdownRef}>
+              <button
+                className={`case-details history-toggle-btn ${historyOpen ? 'is-active' : ''}`}
+                onClick={() => setHistoryOpen(!historyOpen)}
+                title="View saved notebooks & chat history"
+              >
+                <Icon name="history" size={15} />
+                <span>History</span>
+                {notebooks.length > 0 && (
+                  <span className="history-count-badge">{notebooks.length}</span>
+                )}
+                <span className={`history-arrow-indicator ${historyOpen ? 'is-open' : ''}`}>▼</span>
+              </button>
+
+              {historyOpen && (
+                <div className="history-dropdown-menu">
+                  <div className="history-dropdown-header">
+                    <div className="history-header-title">
+                      <Icon name="book" size={15} />
+                      <span>Saved Notebooks</span>
+                    </div>
+                    <button
+                      className="history-new-nb-btn"
+                      onClick={() => startNewChat()}
+                      title="Start a fresh notebook"
+                    >
+                      <Icon name="plus" size={12} />
+                      <span>New</span>
+                    </button>
+                  </div>
+
+                  <div className="history-search-row">
+                    <Icon name="search" size={14} />
+                    <input
+                      type="text"
+                      placeholder="Search previous chats..."
+                      value={notebookSearch}
+                      onChange={(e) => setNotebookSearch(e.target.value)}
+                      autoFocus
+                    />
+                    {notebookSearch && (
+                      <button
+                        className="search-clear-btn"
+                        onClick={() => setNotebookSearch('')}
+                        title="Clear search"
+                      >
+                        ×
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="history-notebooks-list">
+                    {filteredNotebooks.length === 0 ? (
+                      <div className="history-empty-state">
+                        <div className="empty-icon">📓</div>
+                        <p>{notebookSearch ? 'No notebooks match your search' : 'No saved conversations yet'}</p>
+                        <small>
+                          {notebookSearch
+                            ? 'Try searching with different keywords.'
+                            : 'Ask questions or review documents to automatically save your conversation notebooks.'}
+                        </small>
+                      </div>
+                    ) : (
+                      filteredNotebooks.map((nb) => {
+                        const isSelected = nb.id === currentNotebookId
+                        const timeAgo = formatNotebookTime(nb.updatedAt || nb.createdAt)
+                        return (
+                          <div
+                            key={nb.id}
+                            className={`history-notebook-item ${isSelected ? 'is-current' : ''}`}
+                            onClick={() => selectNotebook(nb)}
+                          >
+                            <div className="history-item-content">
+                              <div className="history-item-top">
+                                <span className="history-item-title" title={nb.title}>
+                                  {nb.title || 'Untitled conversation'}
+                                </span>
+                                {isSelected && <span className="current-badge">Active</span>}
+                              </div>
+                              <div className="history-item-meta">
+                                <span>{timeAgo}</span>
+                                <span className="meta-dot">•</span>
+                                <span>{nb.messageCount || nb.messages?.length || 0} msgs</span>
+                              </div>
+                            </div>
+                            <div className="history-item-actions">
+                              <button
+                                className="history-item-btn"
+                                onClick={(e) => renameNotebook(e, nb.id, nb.title)}
+                                title="Rename notebook"
+                                aria-label="Rename notebook"
+                              >
+                                <Icon name="edit" size={13} />
+                              </button>
+                              <button
+                                className="history-item-btn delete"
+                                onClick={(e) => deleteNotebook(e, nb.id)}
+                                title="Delete notebook"
+                                aria-label="Delete notebook"
+                              >
+                                <Icon name="trash" size={13} />
+                              </button>
+                            </div>
+                          </div>
+                        )
+                      })
+                    )}
+                  </div>
+
+                  {notebooks.length > 0 && (
+                    <div className="history-dropdown-footer">
+                      <span>{notebooks.length} total {notebooks.length === 1 ? 'notebook' : 'notebooks'}</span>
+                      <button className="history-clear-all" onClick={clearAllNotebooks}>
+                        Clear all
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         </header>
 
