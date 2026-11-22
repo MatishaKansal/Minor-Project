@@ -15,3 +15,14 @@ venv/
 # Local data outputs
 /data/output/*
 !/data/output/.gitkeep
+
+# Node / Frontend
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+
+# OS / Logs
+.DS_Store
+**/.DS_Store
+*.log

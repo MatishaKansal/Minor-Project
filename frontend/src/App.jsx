@@ -85,6 +85,95 @@ function formatNotebookTime(iso) {
   }
 }
 
+function FormattedAnswer({ answer }) {
+  if (!answer) return null
+
+  // Clean any remaining markdown artifacts client-side as safeguard
+  const clean = answer
+    .replace(/^[ \t]*#{1,6}[ \t]*/gm, '')
+    .replace(/#{1,6}/g, '')
+    .replace(/\*{1,3}([^*\n]+?)\*{1,3}/g, '$1')
+    .replace(/\*/g, '')
+    .replace(/^[ \t]*[-=_]{3,}[ \t]*$/gm, '')
+
+  const lines = clean.split('\n')
+  const elements = []
+  let currentList = []
+
+  const flushList = (keyPrefix) => {
+    if (currentList.length > 0) {
+      elements.push(
+        <ul key={`${keyPrefix}-list`} className="answer-bullet-list" style={{ margin: '6px 0 10px 0', paddingLeft: '20px', listStyleType: 'disc' }}>
+          {currentList.map((item, idx) => (
+            <li key={idx} style={{ margin: '4px 0', lineHeight: '1.65' }}>{item}</li>
+          ))}
+        </ul>
+      )
+      currentList = []
+    }
+  }
+
+  const isHeadingLine = (line) => {
+    const trimmed = line.trim()
+    if (!trimmed) return false
+    const cleanLower = trimmed.replace(/:$/, '').trim().toLowerCase()
+    const knownHeaders = [
+      'summary', 'key findings', 'findings', 'audit findings', 'discrepancy analysis',
+      'discrepancy breakdown', 'tax breakdown', 'audit determination', 'recommendations',
+      'recommendation', 'conclusion', 'audit review status', 'items requiring audit attention',
+      'mathematical derivation', 'verification', 'gaps', 'duplicate payments check complete',
+      'duplicate payments check', 'expense audit complete', 'receipt audit review',
+      'financial records summary', 'supporting citations', 'subtotal breakdown', 'line item details'
+    ]
+    if (knownHeaders.some((h) => cleanLower === h || cleanLower.startsWith(h + ' -') || cleanLower.startsWith(h + ':'))) return true
+    if (/^\d+\.\s+[A-Za-z0-9 ]+$/.test(trimmed) && trimmed.split(/\s+/).length <= 8) return true
+    if (trimmed.endsWith(':') && trimmed.split(/\s+/).length <= 6 && !trimmed.startsWith('-')) return true
+    return false
+  }
+
+  lines.forEach((rawLine, idx) => {
+    const line = rawLine.trim()
+    if (!line) {
+      flushList(`flush-${idx}`)
+      return
+    }
+
+    if (line.startsWith('- ') || line.startsWith('• ')) {
+      currentList.push(line.replace(/^[-•]\s*/, ''))
+    } else if (isHeadingLine(line)) {
+      flushList(`flush-head-${idx}`)
+      elements.push(
+        <h4
+          key={`head-${idx}`}
+          className="answer-section-heading"
+          style={{
+            fontSize: '15px',
+            fontWeight: 700,
+            color: 'var(--text-strong, #0f172a)',
+            margin: idx === 0 ? '0 0 6px 0' : '14px 0 6px 0',
+            letterSpacing: '-0.01em',
+            borderBottom: '1px solid var(--line, rgba(0, 0, 0, 0.07))',
+            paddingBottom: '3px'
+          }}
+        >
+          {line.replace(/:$/, '')}
+        </h4>
+      )
+    } else {
+      flushList(`flush-p-${idx}`)
+      elements.push(
+        <p key={`p-${idx}`} className="answer-paragraph" style={{ margin: '4px 0 8px 0', lineHeight: '1.65' }}>
+          {line}
+        </p>
+      )
+    }
+  })
+
+  flushList('flush-final')
+
+  return <div className="answer-copy formatted-answer">{elements}</div>
+}
+
 function Workspace() {
   const approveEmailDraft = async (proposal) => {
     try {
@@ -1094,7 +1183,17 @@ function Workspace() {
                           </div>
                         )}
 
-                        {message.answer ? <div className="answer-copy" style={{ whiteSpace: 'pre-line', lineHeight: '1.6' }}>{message.answer}</div> : <div className="answer-empty-state"><span className="answer-empty-mark">i</span><div><strong>{message.error ? 'No answer available' : 'No answer generated'}</strong><p>{message.error ? 'The search did not finish, so there is no result to summarize.' : 'The search finished, but no response could be derived from the provided evidence.'}</p></div></div>}
+                        {message.answer ? (
+                          <FormattedAnswer answer={message.answer} />
+                        ) : (
+                          <div className="answer-empty-state">
+                            <span className="answer-empty-mark">i</span>
+                            <div>
+                              <strong>{message.error ? 'No answer available' : 'No answer generated'}</strong>
+                              <p>{message.error ? 'The search did not finish, so there is no result to summarize.' : 'The search finished, but no response could be derived from the provided evidence.'}</p>
+                            </div>
+                          </div>
+                        )}
                       </section>}
 
                       {message.resultsReceived && <section className="response-section evidence-section">

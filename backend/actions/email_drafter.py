@@ -48,7 +48,12 @@ def draft_dispute_email(
         or invoice.get("party_name")
         or "Accounts Team"
     )
-    seller_email = f"billing@{seller_name.lower().replace(' ', '').replace('/', '').replace('.', '')[:12]}.com"
+    # Use dummy email address for drafting vendor dispute emails instead of random/arbitrary domains
+    seller_email = (
+        invoice.get("seller_email")
+        or invoice.get("email")
+        or "dummy-vendor@example.com"
+    )
 
     invoice_total = invoice.get("invoice_total")
     subtotal = invoice.get("subtotal")

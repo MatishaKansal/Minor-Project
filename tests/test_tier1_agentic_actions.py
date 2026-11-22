@@ -28,6 +28,7 @@ def test_email_drafter():
 
     assert draft is not None
     assert draft.recipient_name == "Cloud Providers Pvt Ltd"
+    assert draft.recipient_email == "dummy-vendor@example.com"
     assert "INV-2026-0891" in draft.subject
     assert "Discrepancy of 2160" in draft.body_text
     assert draft.status == "draft"

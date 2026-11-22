@@ -149,6 +149,11 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid #8892ab; outli
 .answer-panel { display: grid; gap: 10px; border-color: color-mix(in srgb, var(--accent) 38%, var(--line)); background: color-mix(in srgb, var(--accent-soft) 28%, var(--surface)); }
 .answer-panel .section-title > span { padding: 3px 7px; border-radius: 99px; background: var(--surface-raised); font-size: 10px; }
 .answer-copy, .answer-empty { margin: 0; color: var(--text); font-size: 14px; line-height: 1.65; }
+.formatted-answer { display: flex; flex-direction: column; gap: 4px; }
+.formatted-answer .answer-section-heading { font-size: 14px; font-weight: 700; color: var(--text); margin: 12px 0 6px 0; letter-spacing: -0.01em; border-bottom: 1px solid var(--line); padding-bottom: 3px; }
+.formatted-answer .answer-bullet-list { margin: 4px 0 8px 0; padding-left: 20px; list-style-type: disc; color: var(--text); }
+.formatted-answer .answer-bullet-list li { margin: 3px 0; line-height: 1.65; }
+.formatted-answer .answer-paragraph { margin: 3px 0 6px 0; line-height: 1.65; color: var(--text); }
 .answer-empty { color: var(--muted); }
 .answer-unavailable { border-color: color-mix(in srgb, #ce7373 45%, var(--line)); background: color-mix(in srgb, #ce7373 8%, var(--surface)); }
 .request-error { display: grid; gap: 5px; border-color: color-mix(in srgb, #ce7373 45%, var(--line)); background: color-mix(in srgb, #ce7373 8%, var(--surface)); }
