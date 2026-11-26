@@ -142,8 +142,12 @@ def retrieve(
         re.search(r"\b\d{4}[-/.]\d{1,2}[-/.]\d{1,2}\b", query)
         or re.search(r"\b\d{1,2}[-/.]\d{1,2}[-/.]\d{4}\b", query)
     )
+    # If the query contains an exact date, we still want to combine exact token matches
+    # with vector similarity results to capture broader context. Previously we returned only
+    # exact_results, which could omit relevant chunks that are only retrieved via embeddings.
     if has_exact_date and exact_results:
-        return exact_results
+        # Continue processing to allow vector results to be added later
+        pass
 
     if len(exact_results) >= match_count:
         return exact_results[:match_count]
