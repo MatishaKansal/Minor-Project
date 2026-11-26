@@ -552,22 +552,11 @@ async def query_documents(
                 existing_payments=company_payments,
             )
 
-            # Execute the fast LLM decision with real-time token streaming
-            decision = None
-            for event_type, payload in DECISION_MAKER.execute_decision_stream(
+            # Execute the cascade with learned stop routing
+            decision = DECISION_MAKER.execute_decision(
                 query=clean_question,
                 evidence=cascade_evidence,
-            ):
-                if event_type == "token":
-                    yield _event("answer_token", token=payload)
-                elif event_type == "decision":
-                    decision = payload
-
-            if not decision:
-                decision = DECISION_MAKER.execute_decision(
-                    query=clean_question,
-                    evidence=cascade_evidence,
-                )
+            )
 
             ai_answer = decision.get("answer", "")
             stopped_tier = decision.get("stopped_tier", "layer_4")
