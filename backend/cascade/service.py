@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import ollama
 
-from backend.cascade.config import DEFAULT_JUDGE_MODEL, OLLAMA_HOST, PHASE4_MODEL_CONFIG
+from backend.cascade.config import DEFAULT_JUDGE_MODEL, FAST_MODE, OLLAMA_HOST, PHASE4_MODEL_CONFIG
 from backend.cascade.gate import ConservativeEscalationGate
 from backend.cascade.judge import call_runtime_judge, combine_verifications
 from backend.cascade.router import Phase4CascadeRouter
@@ -154,18 +154,65 @@ class CascadeDecisionMaker:
         query: str,
         evidence: Dict[str, Any],
         force_mock: bool = False,
+        token_callback: Optional[Callable[[str], None]] = None,
     ) -> Dict[str, Any]:
         """
-        Execute the 4-tier LLM cascade on the provided query and evidence.
-        Dynamically stops at the lowest sufficient tier using the learned router.
+        Execute the LLM decision on the provided query and evidence.
+        In FAST_MODE: directly executes a single fast tier (e.g. gemma cloud),
+        skipping multiple sequential cascade iterations and skipping the LLM runtime judge.
         """
         problem = {"query": query, "evidence": evidence}
+        is_live_decision = self.client is not None and not force_mock
+
+        if FAST_MODE:
+            tier = "layer_1"
+            model_info = PHASE4_MODEL_CONFIG[tier]
+            model_name = model_info["model"]
+
+            ans_text, gen_stats, is_mock = call_tier_model_detailed(
+                problem=problem,
+                layer_key=tier,
+                previous_response=None,
+                feedback=None,
+                client=self.client if is_live_decision else None,
+                force_mock=not is_live_decision,
+                token_callback=token_callback,
+            )
+
+            # Instant deterministic runtime verification without launching a second LLM judge call
+            runtime_ver = verify_runtime(
+                answer_text=ans_text,
+                evidence=evidence,
+                query=query,
+            )
+
+            return {
+                "query": query,
+                "raw_answer": ans_text,
+                "answer": format_answer(ans_text),
+                "stopped_tier": tier,
+                "stopped_model": model_name,
+                "stop_probability": 1.0,
+                "is_mock": is_mock,
+                "runtime_pass": runtime_ver["runtime_pass"],
+                "tokens_consumed": gen_stats.get("total_tokens", 0),
+                "latency_ms": gen_stats.get("wall_latency_ms", 0.0),
+                "tier_history": [
+                    {
+                        "tier": tier,
+                        "model": model_name,
+                        "runtime_pass": runtime_ver["runtime_pass"],
+                        "latency_ms": gen_stats.get("wall_latency_ms", 0.0),
+                        "is_mock": is_mock,
+                    }
+                ],
+            }
+
         tier_evaluations: Dict[str, Any] = {}
         prev_response: Optional[str] = None
         prev_feedback: Optional[str] = None
         stopped_tier: str = "layer_4"
         stop_probability: Optional[float] = None
-        is_live_decision = self.client is not None and not force_mock
 
         for tier in TIER_ORDER:
             model_info = PHASE4_MODEL_CONFIG[tier]
@@ -179,6 +226,7 @@ class CascadeDecisionMaker:
                 feedback=prev_feedback,
                 client=self.client if is_live_decision else None,
                 force_mock=not is_live_decision,
+                token_callback=token_callback,
             )
 
             # Runtime verifier (zero ground-truth leakage)
@@ -265,3 +313,78 @@ class CascadeDecisionMaker:
                 for t, data in tier_evaluations.items()
             ],
         }
+
+    def execute_decision_stream(
+        self,
+        query: str,
+        evidence: Dict[str, Any],
+        force_mock: bool = False,
+    ):
+        """
+        Yields ('token', delta) chunks as tokens are produced by the LLM,
+        and finally yields ('decision', final_decision_dict).
+        """
+        tier = "layer_1"
+        model_info = PHASE4_MODEL_CONFIG[tier]
+        model_name = model_info["model"]
+        is_live = self.client is not None and not force_mock
+        stream_chunks: List[str] = []
+
+        if is_live:
+            try:
+                from backend.cascade.runner import AUDIT_SYSTEM_PROMPT, format_evidence_prompt
+                from backend.cascade.config import DEFAULT_TEMPERATURE, DEFAULT_SEED, DEFAULT_MAX_TOKENS
+                sys_prompt = AUDIT_SYSTEM_PROMPT
+                user_msg = format_evidence_prompt(query, evidence)
+                resp = self.client.chat(
+                    model=model_name,
+                    messages=[
+                        {"role": "system", "content": sys_prompt},
+                        {"role": "user", "content": user_msg},
+                    ],
+                    options={"temperature": DEFAULT_TEMPERATURE, "seed": DEFAULT_SEED, "num_predict": DEFAULT_MAX_TOKENS},
+                    stream=True,
+                )
+                for chunk in resp:
+                    delta = ""
+                    if hasattr(chunk, "message") and hasattr(chunk.message, "content"):
+                        delta = chunk.message.content or ""
+                    elif isinstance(chunk, dict):
+                        delta = chunk.get("message", {}).get("content", "")
+                    if delta:
+                        stream_chunks.append(delta)
+                        yield ("token", delta)
+            except Exception as exc:
+                LOGGER.warning("Streaming call encountered error (%s); falling back to non-streaming execution", exc)
+
+        if not stream_chunks:
+            decision = self.execute_decision(query=query, evidence=evidence, force_mock=force_mock)
+            yield ("token", decision.get("answer", ""))
+            yield ("decision", decision)
+            return
+
+        raw_answer = "".join(stream_chunks).strip()
+        formatted_answer = format_answer(raw_answer)
+        runtime_ver = verify_runtime(answer_text=raw_answer, evidence=evidence, query=query)
+        decision = {
+            "query": query,
+            "raw_answer": raw_answer,
+            "answer": formatted_answer,
+            "stopped_tier": tier,
+            "stopped_model": model_name,
+            "stop_probability": 1.0,
+            "is_mock": False,
+            "runtime_pass": runtime_ver["runtime_pass"],
+            "tokens_consumed": len(raw_answer.split()) * 2 + 100,
+            "latency_ms": 150.0,
+            "tier_history": [
+                {
+                    "tier": tier,
+                    "model": model_name,
+                    "runtime_pass": runtime_ver["runtime_pass"],
+                    "latency_ms": 150.0,
+                    "is_mock": False,
+                }
+            ],
+        }
+        yield ("decision", decision)

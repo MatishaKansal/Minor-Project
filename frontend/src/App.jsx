@@ -46,7 +46,7 @@ function Icon({ name, size = 17 }) {
 
 function formatTierName(tier) {
   const map = {
-    layer_1: 'Tier 1 (Deterministic Key Hash)',
+    layer_1: 'Gemma Cloud Fast Audit',
     layer_2: 'Tier 2 (SLM Narration Matcher)',
     layer_3: 'Tier 3 (Multi-Source Reasoning LLM)',
     layer_4: 'Tier 4 (Frontier Compliance Auditor)',
@@ -835,13 +835,17 @@ function Workspace() {
               { label: `Added ${event.file_name} to search`, state: 'done' },
             ],
           }))
+        } else if (event.type === 'answer_token' || event.type === 'token') {
+          updateAssistant((message) => ({
+            answer: (message.answer || '') + (event.token || ''),
+          }))
         } else if (event.type === 'results') {
-          updateAssistant({
+          updateAssistant((message) => ({
             chunks: event.chunks || [],
             warnings: event.warnings || [],
             files: event.files || [],
             llmCalled: event.llm_called,
-            answer: event.llm_called && event.answer ? event.answer : '',
+            answer: event.llm_called && event.answer ? event.answer : (message.answer || ''),
             stoppedTier: event.stopped_tier,
             stoppedModel: event.stopped_model,
             stopProbability: event.stop_probability,
@@ -849,7 +853,7 @@ function Workspace() {
             isMock: event.is_mock,
             proposals: event.proposals || [],
             resultsReceived: true,
-          })
+          }))
           ;(event.files || []).forEach((file) => {
             setKnownFiles((current) => current.some((known) => known.name === file.file_name)
               ? current

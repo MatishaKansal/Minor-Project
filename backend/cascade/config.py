@@ -12,33 +12,34 @@ TRACES_DIR = PROJECT_ROOT / "traces" / "phase4"
 RESULTS_DIR = PROJECT_ROOT / "results" / "phase4"
 ROUTERS_DIR = PHASE4_ROOT / "routers"
 
-# Model Ladder configuration. Override the local model with OLLAMA_MODEL when
-# using a different model or a paid Ollama Cloud setup.
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3.2:3b")
+# Model Ladder configuration.
+# Defaults to gemma4:cloud for fast answers during testing
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "gemma4:cloud")
+FAST_MODE = os.environ.get("FAST_MODE", "true").lower() in ("true", "1", "yes")
 
 PHASE4_MODEL_CONFIG = {
     "layer_1": {
         "key": "layer_1",
         "model": OLLAMA_MODEL,
-        "name": OLLAMA_MODEL,
+        "name": "gemma4-cloud",
         "cost_per_1k_tokens": 0.0005,
     },
     "layer_2": {
         "key": "layer_2",
         "model": OLLAMA_MODEL,
-        "name": OLLAMA_MODEL,
+        "name": "gemma4-cloud",
         "cost_per_1k_tokens": 0.0010,
     },
     "layer_3": {
         "key": "layer_3",
         "model": OLLAMA_MODEL,
-        "name": OLLAMA_MODEL,
+        "name": "gemma4-cloud",
         "cost_per_1k_tokens": 0.0020,
     },
     "layer_4": {
         "key": "layer_4",
         "model": OLLAMA_MODEL,
-        "name": OLLAMA_MODEL,
+        "name": "gemma4-cloud",
         "cost_per_1k_tokens": 0.0040,
     },
 }
@@ -52,6 +53,7 @@ OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 MAX_FALSE_STOP_RATE = 0.05
 DEFAULT_TEMPERATURE = 0.1
 DEFAULT_SEED = 42
+DEFAULT_MAX_TOKENS = int(os.environ.get("MAX_PREDICT_TOKENS", "384"))
 
 # Database configuration (zero-secret by default)
 SUPABASE_DB_URL = os.environ.get("SUPABASE_DB_URL") or os.environ.get("DATABASE_URL")
