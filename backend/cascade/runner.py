@@ -3,11 +3,11 @@ from __future__ import annotations
 import json
 import logging
 import time
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import ollama
 
-from backend.cascade.config import PHASE4_MODEL_CONFIG, OLLAMA_HOST, DEFAULT_TEMPERATURE, DEFAULT_SEED, DEFAULT_MAX_TOKENS
+from backend.cascade.config import PHASE4_MODEL_CONFIG, OLLAMA_HOST, DEFAULT_TEMPERATURE, DEFAULT_SEED
 from backend.cascade.contract import AuditAnswer, ReconciliationStatus
 from backend.cascade.signals import extract_signals
 from backend.cascade.verifier import verify_deterministic
@@ -36,74 +36,11 @@ Produce an improved, accurate, evidence-grounded final answer resolving any iden
 """
 
 
-def compact_evidence_summary(evidence: Dict[str, Any]) -> str:
-    """Build a concise, token-efficient summary of evidence to reduce prompt evaluation latency."""
-    lines: List[str] = []
-
-    # 1. Primary Invoice Information
-    inv = evidence.get("invoice") or {}
-    if not inv and evidence.get("invoices"):
-        inv = evidence.get("invoices")[0]
-
-    if inv:
-        lines.append("PRIMARY INVOICE:")
-        if inv.get("invoice_number"):
-            lines.append(f"  - Number: {inv.get('invoice_number')}")
-        if inv.get("seller_name"):
-            lines.append(f"  - Seller: {inv.get('seller_name')}")
-        if inv.get("invoice_total") is not None:
-            lines.append(f"  - Total: {inv.get('invoice_total')} {inv.get('currency', 'INR')}")
-        if inv.get("subtotal") is not None:
-            lines.append(f"  - Subtotal: {inv.get('subtotal')}")
-        tax_parts = []
-        if inv.get("cgst_total"):
-            tax_parts.append(f"CGST: {inv.get('cgst_total')}")
-        if inv.get("sgst_total"):
-            tax_parts.append(f"SGST: {inv.get('sgst_total')}")
-        if inv.get("igst_total"):
-            tax_parts.append(f"IGST: {inv.get('igst_total')}")
-        if tax_parts:
-            lines.append(f"  - Taxes: {', '.join(tax_parts)}")
-        inv_dt = inv.get("invoice_date") or inv.get("date")
-        if inv_dt:
-            lines.append(f"  - Date: {inv_dt}")
-
-    # 2. Key Line Items (top 5)
-    items = evidence.get("items", []) or (inv.get("items", []) if inv else [])
-    if items:
-        lines.append("LINE ITEMS (first 5):")
-        for it in items[:5]:
-            desc = it.get("description", "Item")
-            val = it.get("taxable_value") or it.get("line_total")
-            lines.append(f"  - {desc}: {val}")
-
-    # 3. Relevant Payments / Settlements (top 3)
-    payments = evidence.get("payments", [])
-    if payments:
-        lines.append("PAYMENTS / SETTLEMENTS (first 3):")
-        for p in payments[:3]:
-            lines.append(f"  - {p.get('date', 'N/A')}: {p.get('amount')} ({p.get('description', '')})")
-
-    # 4. Relevant Document Chunks (top 3 snippets)
-    chunks = evidence.get("document_chunks", [])
-    if chunks:
-        lines.append("DOCUMENT EXCERPTS:")
-        for c in chunks[:3]:
-            text = c.get("content", "").strip()[:200].replace("\n", " ")
-            lines.append(f"  - [{c.get('file_name', 'Doc')}]: {text}")
-
-    if not lines:
-        return json.dumps(evidence, indent=2)
-
-    return "\n".join(lines)
-
-
 def format_evidence_prompt(query: str, evidence: Dict[str, Any]) -> str:
-    summary = compact_evidence_summary(evidence)
     return (
         f"[USER AUDIT INQUIRY]:\n{query}\n\n"
-        f"[EXTRACTED FINANCIAL EVIDENCE]:\n"
-        f"{summary}\n\n"
+        f"[EXTRACTED SOURCE EVIDENCE JSON]:\n"
+        f"{json.dumps(evidence, indent=2)}\n\n"
         "Provide your audited explanation, status, and supporting citations with clean headings and subheadings (do not use asterisks or hashes):"
     )
 
@@ -295,12 +232,12 @@ def call_tier_model_detailed(
     feedback: Optional[str] = None,
     client: Optional[ollama.Client] = None,
     force_mock: bool = False,
-    token_callback: Optional[Callable[[str], None]] = None,
 ) -> Tuple[str, Dict[str, Any], bool]:
     """Call specified model tier and return detailed resource accounting."""
     model_name = PHASE4_MODEL_CONFIG[layer_key]["model"]
     query = problem["query"]
     evidence = problem["evidence"]
+
 
     if not force_mock and client is not None:
         try:
@@ -312,61 +249,24 @@ def call_tier_model_detailed(
                 user_msg = format_evidence_prompt(query, evidence)
 
             retries = 0
-            for attempt in range(2):
+            for attempt in range(3):
                 t0 = time.perf_counter()
                 try:
-                    if token_callback:
-                        stream_resp = client.chat(
-                            model=model_name,
-                            messages=[
-                                {"role": "system", "content": sys_prompt},
-                                {"role": "user", "content": user_msg},
-                            ],
-                            options={"temperature": DEFAULT_TEMPERATURE, "seed": DEFAULT_SEED, "num_predict": DEFAULT_MAX_TOKENS},
-                            stream=True,
-                        )
-                        chunks: List[str] = []
-                        prompt_tokens = None
-                        completion_tokens = None
-                        total_duration = None
-                        for chunk in stream_resp:
-                            delta = ""
-                            if hasattr(chunk, "message") and hasattr(chunk.message, "content"):
-                                delta = chunk.message.content or ""
-                            elif isinstance(chunk, dict):
-                                delta = chunk.get("message", {}).get("content", "")
-                            if delta:
-                                chunks.append(delta)
-                                token_callback(delta)
-                            if hasattr(chunk, "eval_count"):
-                                completion_tokens = chunk.eval_count
-                            if hasattr(chunk, "prompt_eval_count"):
-                                prompt_tokens = chunk.prompt_eval_count
-                            if hasattr(chunk, "total_duration"):
-                                total_duration = chunk.total_duration
-
-                        content = "".join(chunks).strip()
-                        latency_ms = round((time.perf_counter() - t0) * 1000, 2)
-                        p_tok = prompt_tokens or 0
-                        c_tok = completion_tokens or len(content.split())
-                        total_tokens = p_tok + c_tok
-                    else:
-                        resp = client.chat(
-                            model=model_name,
-                            messages=[
-                                {"role": "system", "content": sys_prompt},
-                                {"role": "user", "content": user_msg},
-                            ],
-                            options={"temperature": DEFAULT_TEMPERATURE, "seed": DEFAULT_SEED, "num_predict": DEFAULT_MAX_TOKENS},
-                        )
-                        latency_ms = round((time.perf_counter() - t0) * 1000, 2)
-                        content = resp.message.content.strip()
-                        prompt_tokens = getattr(resp, "prompt_eval_count", None)
-                        completion_tokens = getattr(resp, "eval_count", None)
-                        p_tok = prompt_tokens or 0
-                        c_tok = completion_tokens or 0
-                        total_tokens = (p_tok + c_tok) if prompt_tokens is not None else (len(content.split()) * 2 + 150)
-                        total_duration = getattr(resp, "total_duration", None)
+                    resp = client.chat(
+                        model=model_name,
+                        messages=[
+                            {"role": "system", "content": sys_prompt},
+                            {"role": "user", "content": user_msg},
+                        ],
+                        options={"temperature": DEFAULT_TEMPERATURE, "seed": DEFAULT_SEED, "num_predict": 1024},
+                    )
+                    latency_ms = round((time.perf_counter() - t0) * 1000, 2)
+                    content = resp.message.content.strip()
+                    prompt_tokens = getattr(resp, "prompt_eval_count", None)
+                    completion_tokens = getattr(resp, "eval_count", None)
+                    p_tok = prompt_tokens or 0
+                    c_tok = completion_tokens or 0
+                    total_tokens = (p_tok + c_tok) if prompt_tokens is not None else (len(content.split()) * 2 + 150)
 
                     stats = {
                         "model": model_name,
@@ -376,7 +276,7 @@ def call_tier_model_detailed(
                         "completion_tokens": completion_tokens,
                         "total_tokens": total_tokens,
                         "wall_latency_ms": latency_ms,
-                        "engine_total_duration_ns": total_duration,
+                        "engine_total_duration_ns": getattr(resp, "total_duration", None),
                         "retries": retries,
                         "error": None,
                         "execution_mode": "genuine_ollama_call",
@@ -385,14 +285,12 @@ def call_tier_model_detailed(
                 except Exception as e:
                     retries += 1
                     logger.warning("Live call to %s attempt %d failed (%s). Retrying...", model_name, attempt + 1, e)
-                    time.sleep(attempt + 0.5)
+                    time.sleep(attempt * 2 + 1)
         except Exception as e:
             logger.info("Live call to %s failed (%s). Falling back to mock.", model_name, e)
 
     # Mock fallback
     content, tokens, latency_ms = mock_generate_answer(problem, layer_key, previous_response)
-    if token_callback:
-        token_callback(content)
     stats = {
         "model": model_name,
         "tier": layer_key,
