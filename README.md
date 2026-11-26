@@ -253,3 +253,48 @@ The system is now fully **agentic**, with goal-directed autonomous capabilities 
 - Cross-scans invoices against bank debits and payments.
 - Identifies duplicate invoice numbers, unmatched/unpaid invoices, and unbacked bank debits missing receipts.
 - Generates categorized anomaly alerts with recommended corrective actions (`POST /api/actions/run-patrol`).
+
+### 4. Expected Impact
+- The proposed system aims to transform conventional financial document processing into an intelligent, evidence-driven auditing workflow. By combining OCR, multimodal parsing, Retrieval-Augmented Generation (RAG), a multi-tier LLM cascade, deterministic verification, and human-in-the-loop agentic actions, the platform provides a foundation for more transparent, traceable, and efficient financial analysis
+- Its modular design also creates opportunities for future integration with enterprise accounting platforms, financial management systems, and automated compliance workflows.
+
+### Advanced System Capabilities & Future Enhancements
+
+## 1. Intelligent Financial Risk Assessment
+- Introduce automated financial risk scoring to identify suspicious transactions, unusual invoice patterns, and potential accounting discrepancies.
+- Analyze historical financial records to detect irregularities and highlight transactions requiring additional verification.
+- Generate contextual risk summaries to support faster and more informed financial decision-making.
+
+
+## 2. Explainable AI & Transparent Decision Making
+- Provide human-readable explanations for every major audit finding, including the reasoning behind detected discrepancies.
+- Maintain complete field-level traceability between extracted financial values and their original document sources.
+- Enable auditors to independently verify AI-generated conclusions through evidence references and mathematical validation.
+
+## 3. Advanced Fraud & Anomaly Detection
+- Identify duplicate invoices, inconsistent payment records, abnormal transaction amounts, and suspicious financial patterns.
+- Combine rule-based validation with AI-assisted analysis to improve anomaly identification.
+- Generate structured alerts for potentially fraudulent or inconsistent financial activities.
+
+## 4. Intelligent Financial Reporting
+- Generate automated financial summaries, reconciliation reports, and audit findings using extracted multimodal evidence.
+- Present important financial indicators, outstanding payments, tax discrepancies, and transaction irregularities in a structured format.
+- Support evidence-backed reporting to improve audit transparency and reduce manual documentation efforts.
+
+## 5. Security, Privacy & Data Integrity
+- Protect sensitive financial information through secure server-side credential management and controlled database access.
+- Maintain traceability of extracted information through provenance records and source-document references.
+- Apply human approval checkpoints before executing sensitive agentic actions, such as sending dispute communications.
+
+## 6. Scalability & Modular Architecture
+- Maintain independent parsing, extraction, retrieval, reasoning, verification, and action-generation components for easier maintenance.
+- Support the integration of additional document formats and financial data sources without redesigning the complete architecture.
+- Enable future expansion toward enterprise-level financial auditing and automated accounting workflows
+
+## 7. Future Research Directions
+- Integrate predictive financial analytics for forecasting cash flow and identifying potential payment delays.
+- Explore advanced fraud detection models using larger, independently labelled financial datasets.
+- Improve multimodal reasoning through enhanced document-layout understanding and cross-document contextual analysis.
+- Develop comprehensive evaluation benchmarks for extraction accuracy, retrieval quality, answer grounding, and audit reliability.
+
+
