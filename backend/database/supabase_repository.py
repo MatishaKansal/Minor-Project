@@ -110,6 +110,18 @@ def _sync_business_profile(supabase: Client, business_id: str, evidence: Any) ->
     LOGGER.info("Synchronized business profile fields for %s: %s", business_id, sorted(profile))
 
 
+def get_business_profile(supabase: Client, business_id: str) -> dict:
+    """Fetch the persisted business profile fields for the given business_id.
+    Returns a dict with keys like business_name, gstin, etc., or empty dict if not found.
+    """
+    try:
+        result = supabase.table("business").select("*").eq("business_id", business_id).limit(1).execute()
+        if result.data:
+            return result.data[0]
+    except Exception as exc:
+        LOGGER.warning("Failed to fetch business profile for %s: %s", business_id, exc)
+    return {}
+
 def get_storage_bucket(client: Client) -> str:
     configured = os.getenv("SUPABASE_STORAGE_BUCKET")
     if configured:

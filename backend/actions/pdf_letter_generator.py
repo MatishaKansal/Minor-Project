@@ -22,6 +22,7 @@ def generate_audit_letter_pdf(
     evidence: Dict[str, Any],
     stopped_tier: str = "layer_3",
     output_stream: Optional[io.BytesIO] = None,
+    business_profile: Optional[Dict[str, Any]] = None,
 ) -> bytes:
     """
     Generate a formatted formal PDF audit letter from the cascade decision.

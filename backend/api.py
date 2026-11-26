@@ -137,11 +137,21 @@ def download_letter_pdf(invoice_number: Optional[str] = Query(None), user: Authe
             "stopped_tier": "layer_2",
         }
 
+    # Retrieve business profile for the company
+    from backend.database.supabase_repository import get_business_profile, get_supabase_client
+    biz_profile = {}
+    try:
+        client = get_supabase_client()
+        biz_id = user.business_id()
+        biz_profile = get_business_profile(client, biz_id)
+    except Exception as exc:
+        LOGGER.warning("Failed to load business profile for PDF generation: %s", exc)
     pdf_bytes = generate_audit_letter_pdf(
         query=audit_data.get("query", "Audit Inquiry"),
         audit_answer=audit_data.get("answer", ""),
         evidence=audit_data.get("evidence", {}),
         stopped_tier=audit_data.get("stopped_tier", "layer_3"),
+        business_profile=biz_profile,
     )
 
     filename = f"Audit_Notice_{invoice_number or 'Discrepancy'}.pdf"
