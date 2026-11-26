@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import PlatformDashboard from './PlatformDashboard.jsx'
 import CompanyWorkspace from './CompanyWorkspace.jsx'
 import { AuthLoadingScreen, ProfileAccessScreen, SignInScreen } from './auth/AuthScreens.jsx'
@@ -258,9 +258,46 @@ function Workspace() {
   const historyDropdownRef = useRef(null)
   const storageKey = `ledgerline_notebooks_${profile?.business_id || profile?.user_id || 'default'}`
 
-  // Load saved notebooks on profile change
-  useEffect(() => {
+  // Save notebook to backend database (Supabase chat_notebooks)
+  const saveNotebookToDB = useCallback(async (nb) => {
+    if (!nb || !nb.id) return
+    try {
+      await apiFetch('/api/notebooks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: nb.id,
+          title: nb.title,
+          messages: nb.messages || [],
+          messageCount: nb.messageCount || (nb.messages || []).length,
+          createdAt: nb.createdAt,
+          updatedAt: nb.updatedAt,
+        }),
+      })
+    } catch (err) {
+      console.warn('Failed to persist notebook to database:', err)
+    }
+  }, [apiFetch])
+
+  // Load saved notebooks from database on profile load / switch
+  const fetchNotebooks = useCallback(async () => {
     if (!profile) return
+    try {
+      const res = await apiFetch('/api/notebooks')
+      if (res.ok) {
+        const data = await res.json()
+        if (Array.isArray(data)) {
+          setNotebooks(data)
+          try {
+            localStorage.setItem(storageKey, JSON.stringify(data))
+          } catch {}
+          return
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to fetch notebooks from database, falling back to local storage', e)
+    }
+    // Fallback to localStorage if offline
     try {
       const raw = localStorage.getItem(storageKey)
       if (raw) {
@@ -269,14 +306,16 @@ function Workspace() {
           setNotebooks(parsed)
         }
       }
-    } catch (e) {
-      console.warn('Failed to parse saved notebooks', e)
-    }
-  }, [profile?.business_id, profile?.user_id, storageKey])
+    } catch {}
+  }, [profile, apiFetch, storageKey])
 
-  // Save notebooks to localStorage
   useEffect(() => {
-    if (!profile) return
+    if (profile) fetchNotebooks()
+  }, [profile, fetchNotebooks])
+
+  // Backup to localStorage when notebooks change
+  useEffect(() => {
+    if (!profile || notebooks.length === 0) return
     try {
       localStorage.setItem(storageKey, JSON.stringify(notebooks))
     } catch (e) {
@@ -284,9 +323,10 @@ function Workspace() {
     }
   }, [notebooks, profile, storageKey])
 
-  // Sync active notebook messages
+  // Sync active notebook messages & debounced persist to database
   useEffect(() => {
     if (!currentNotebookId || messages.length === 0) return
+    const nowIso = new Date().toISOString()
     setNotebooks((prev) => {
       const target = prev.find((nb) => nb.id === currentNotebookId)
       if (!target || target.messages === messages) return prev
@@ -296,12 +336,28 @@ function Workspace() {
               ...nb,
               messages,
               messageCount: messages.length,
-              updatedAt: new Date().toISOString(),
+              updatedAt: nowIso,
             }
           : nb
       )
     })
-  }, [messages, currentNotebookId])
+
+    const timer = setTimeout(() => {
+      const currentNb = notebooks.find((nb) => nb.id === currentNotebookId)
+      if (currentNb) {
+        saveNotebookToDB({
+          id: currentNotebookId,
+          title: currentNb.title || 'Financial inquiry',
+          messages,
+          messageCount: messages.length,
+          createdAt: currentNb.createdAt,
+          updatedAt: nowIso,
+        })
+      }
+    }, 700)
+
+    return () => clearTimeout(timer)
+  }, [messages, currentNotebookId, saveNotebookToDB, notebooks])
 
   // Click outside and Escape handler for history dropdown
   useEffect(() => {
@@ -336,17 +392,31 @@ function Workspace() {
     setHistoryOpen(false)
   }
 
-  function selectNotebook(nb) {
+  async function selectNotebook(nb) {
     if (isBusy) return
     handleSelectView('search')
     setCurrentNotebookId(nb.id)
-    setMessages(nb.messages || [])
     setDraft('')
     setAttachedFiles([])
     setHistoryOpen(false)
+    if (nb.messages && nb.messages.length > 0) {
+      setMessages(nb.messages)
+    }
+    // Fetch latest messages directly from database
+    try {
+      const res = await apiFetch(`/api/notebooks/${nb.id}`)
+      if (res.ok) {
+        const data = await res.json()
+        if (data && data.messages) {
+          setMessages(data.messages)
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to retrieve full notebook from DB:', err)
+    }
   }
 
-  function deleteNotebook(e, id) {
+  async function deleteNotebook(e, id) {
     e.stopPropagation()
     setNotebooks((prev) => prev.filter((nb) => nb.id !== id))
     if (currentNotebookId === id) {
@@ -354,26 +424,46 @@ function Workspace() {
       setMessages([])
     }
     showNotice('Notebook deleted')
-  }
-
-  function renameNotebook(e, id, currentTitle) {
-    e.stopPropagation()
-    const newTitle = window.prompt('Rename notebook:', currentTitle)
-    if (newTitle && newTitle.trim() && newTitle.trim() !== currentTitle) {
-      setNotebooks((prev) =>
-        prev.map((nb) => (nb.id === id ? { ...nb, title: newTitle.trim() } : nb))
-      )
-      showNotice('Notebook renamed')
+    try {
+      await apiFetch(`/api/notebooks/${id}`, { method: 'DELETE' })
+    } catch (err) {
+      console.warn('Failed to delete notebook in DB:', err)
     }
   }
 
-  function clearAllNotebooks() {
+  async function renameNotebook(e, id, currentTitle) {
+    e.stopPropagation()
+    const newTitle = window.prompt('Rename notebook:', currentTitle)
+    if (newTitle && newTitle.trim() && newTitle.trim() !== currentTitle) {
+      const trimmed = newTitle.trim()
+      setNotebooks((prev) =>
+        prev.map((nb) => (nb.id === id ? { ...nb, title: trimmed } : nb))
+      )
+      showNotice('Notebook renamed')
+      try {
+        await apiFetch(`/api/notebooks/${id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title: trimmed }),
+        })
+      } catch (err) {
+        console.warn('Failed to update notebook title in DB:', err)
+      }
+    }
+  }
+
+  async function clearAllNotebooks() {
     if (window.confirm('Are you sure you want to delete all saved notebooks?')) {
       setNotebooks([])
       setCurrentNotebookId(null)
       setMessages([])
       setHistoryOpen(false)
       showNotice('All notebooks cleared')
+      try {
+        await apiFetch('/api/notebooks', { method: 'DELETE' })
+      } catch (err) {
+        console.warn('Failed to clear notebooks from DB:', err)
+      }
     }
   }
 
@@ -757,6 +847,7 @@ function Workspace() {
       }
       setCurrentNotebookId(activeId)
       setNotebooks((prev) => [newNotebook, ...prev])
+      saveNotebookToDB(newNotebook)
     }
 
     setMessages((current) => [

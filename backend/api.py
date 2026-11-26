@@ -29,6 +29,7 @@ from backend.audit.router import router as audit_router
 from backend.auth import AuthenticatedUser, require_roles
 from backend.auth_router import router as auth_router
 from backend.company_router import companies_router, company_router, platform_router
+from backend.notebooks_router import notebooks_router
 from backend.cascade.service import CascadeDecisionMaker, evidence_to_cascade_dict
 from backend.parsers.bank_csv_parser import SUPPORTED_EXTENSIONS as BANK_CSV_EXTENSIONS
 from backend.rag.retriever import retrieve
@@ -45,6 +46,7 @@ app.include_router(auth_router)
 app.include_router(companies_router)
 app.include_router(company_router)
 app.include_router(platform_router)
+app.include_router(notebooks_router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -52,7 +54,7 @@ app.add_middleware(
         "http://127.0.0.1:5173",
     ],
     allow_credentials=False,
-    allow_methods=["GET", "POST", "PATCH"],
+    allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE"],
     allow_headers=["Authorization", "Content-Type", "X-Business-ID"],
 )
 
